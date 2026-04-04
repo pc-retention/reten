@@ -1,31 +1,46 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Send, Calendar, Plus, BarChart3, Eye, MousePointer } from 'lucide-react';
-import { campaigns, communicationLogs } from '../lib/testData';
+import { supabase } from '../lib/supabase';
 import { format, parseISO, startOfMonth, endOfMonth, eachDayOfInterval, getDay, isSameDay } from 'date-fns';
 import { uk } from 'date-fns/locale';
+import type { Campaign, CommunicationLog } from '../types';
 
 const statusColors: Record<string, string> = {
-  draft: 'bg-gray-100 text-gray-600',
-  scheduled: 'bg-blue-100 text-blue-700',
-  sending: 'bg-yellow-100 text-yellow-700',
-  sent: 'bg-green-100 text-green-700',
+  draft: 'bg-gray-100 text-gray-600', scheduled: 'bg-blue-100 text-blue-700',
+  sending: 'bg-yellow-100 text-yellow-700', sent: 'bg-green-100 text-green-700',
   cancelled: 'bg-red-100 text-red-700',
 };
 
 export default function CampaignsPage() {
   const [tab, setTab] = useState<'calendar' | 'list' | 'ab'>('list');
-  const [currentMonth] = useState(new Date(2026, 3, 1)); // Квітень 2026
+  const [currentMonth] = useState(new Date(2026, 3, 1));
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [abComms, setAbComms] = useState<CommunicationLog[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      const [campaignsRes, commsRes] = await Promise.all([
+        supabase.from('campaigns').select('*').order('scheduled_at', { ascending: false }),
+        supabase.from('communication_log').select('*').not('ab_variant', 'is', null),
+      ]);
+      setCampaigns(campaignsRes.data ?? []);
+      setAbComms(commsRes.data ?? []);
+      setLoading(false);
+    }
+    load();
+  }, []);
 
   const monthStart = startOfMonth(currentMonth);
   const monthEnd = endOfMonth(currentMonth);
   const days = eachDayOfInterval({ start: monthStart, end: monthEnd });
-  const startDayOfWeek = getDay(monthStart); // 0 = Sun
-  const emptyDays = startDayOfWeek === 0 ? 6 : startDayOfWeek - 1; // Monday start
+  const startDayOfWeek = getDay(monthStart);
+  const emptyDays = startDayOfWeek === 0 ? 6 : startDayOfWeek - 1;
 
-  // A/B тест дані
-  const abComms = communicationLogs.filter(c => c.ab_variant);
   const variantA = abComms.filter(c => c.ab_variant === 'A');
   const variantB = abComms.filter(c => c.ab_variant === 'B');
+
+  if (loading) return <div className="text-center py-20 text-gray-400">Завантаження...</div>;
 
   return (
     <div className="space-y-6">
@@ -76,7 +91,9 @@ export default function CampaignsPage() {
                   <td className="px-4 py-3 text-gray-600 hidden md:table-cell">{c.target_segment || 'всі'}</td>
                   <td className="px-4 py-3 text-gray-600 hidden md:table-cell">{c.channel || '-'}</td>
                   <td className="px-4 py-3 text-center">
-                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${statusColors[c.status]}`}>{{ draft: 'Чернетка', scheduled: 'Заплановано', sending: 'Надсилається', sent: 'Надіслано', cancelled: 'Скасовано' }[c.status] || c.status}</span>
+                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${statusColors[c.status]}`}>
+                      {{ draft: 'Чернетка', scheduled: 'Заплановано', sending: 'Надсилається', sent: 'Надіслано', cancelled: 'Скасовано' }[c.status] || c.status}
+                    </span>
                   </td>
                   <td className="px-4 py-3 text-right font-medium text-gray-900">{c.sent_count}</td>
                   <td className="px-4 py-3 text-right text-gray-600 hidden lg:table-cell">
@@ -129,7 +146,6 @@ export default function CampaignsPage() {
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-gray-900 mb-6">A/B Тестування шаблонів</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Variant A */}
             <div className="border-2 border-blue-200 rounded-xl p-5">
               <div className="flex items-center gap-2 mb-4">
                 <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded font-bold text-sm">A</span>
@@ -153,7 +169,6 @@ export default function CampaignsPage() {
               </div>
             </div>
 
-            {/* Variant B */}
             <div className="border-2 border-green-200 rounded-xl p-5">
               <div className="flex items-center gap-2 mb-4">
                 <span className="px-2 py-1 bg-green-100 text-green-700 rounded font-bold text-sm">B</span>

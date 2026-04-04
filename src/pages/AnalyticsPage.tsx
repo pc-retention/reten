@@ -1,44 +1,67 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
-import { metricsDaily, cohortSnapshots, clients } from '../lib/testData';
+import { supabase } from '../lib/supabase';
 import { format, parseISO } from 'date-fns';
 import { uk } from 'date-fns/locale';
+import type { MetricsDaily, CohortSnapshot } from '../types';
+
+type ClientRow = {
+  total_orders: number;
+  is_active: boolean;
+  total_spent: number;
+  avg_order_value: number;
+  rfm_segment: string | null;
+};
 
 export default function AnalyticsPage() {
   const [period, setPeriod] = useState<'7' | '14' | '30'>('30');
+  const [metrics, setMetrics] = useState<MetricsDaily[]>([]);
+  const [cohorts, setCohorts] = useState<CohortSnapshot[]>([]);
+  const [clients, setClients] = useState<ClientRow[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const days = metricsDaily.slice(-Number(period));
-  const prevDays = metricsDaily.slice(-Number(period) * 2, -Number(period));
+  useEffect(() => {
+    async function load() {
+      const [metricsRes, cohortsRes, clientsRes] = await Promise.all([
+        supabase.from('metrics_daily').select('*').order('date', { ascending: true }),
+        supabase.from('cohort_snapshots').select('*').order('cohort_month', { ascending: true }),
+        supabase.from('clients').select('total_orders, is_active, total_spent, avg_order_value, rfm_segment'),
+      ]);
+      setMetrics(metricsRes.data ?? []);
+      setCohorts(cohortsRes.data ?? []);
+      setClients(clientsRes.data ?? []);
+      setLoading(false);
+    }
+    load();
+  }, []);
+
+  const days = metrics.slice(-Number(period));
+  const prevDays = metrics.slice(-Number(period) * 2, -Number(period));
 
   const totalRev = days.reduce((s, m) => s + m.total_revenue, 0);
   const prevRev = prevDays.reduce((s, m) => s + m.total_revenue, 0);
   const revChange = prevRev > 0 ? ((totalRev - prevRev) / prevRev * 100).toFixed(1) : '0';
-
   const totalOrders = days.reduce((s, m) => s + m.total_orders, 0);
   const avgAOV = totalOrders > 0 ? totalRev / totalOrders : 0;
 
   const totalClients = clients.length;
   const repeatClients = clients.filter(c => c.total_orders >= 2).length;
-  const retentionRate = (repeatClients / Math.max(totalClients, 1) * 100);
-  const churnedClients = clients.filter(c => !c.is_active).length;
-  const churnRate = (churnedClients / Math.max(totalClients, 1) * 100);
-
+  const retentionRate = repeatClients / Math.max(totalClients, 1) * 100;
+  const churnRate = clients.filter(c => !c.is_active).length / Math.max(totalClients, 1) * 100;
   const avgLTV = clients.filter(c => c.total_spent > 0).reduce((s, c) => s + c.total_spent, 0) / Math.max(clients.filter(c => c.total_spent > 0).length, 1);
 
-  // Воронка
   const t1 = clients.filter(c => c.total_orders >= 1).length;
   const t2 = clients.filter(c => c.total_orders >= 2).length;
   const t3 = clients.filter(c => c.total_orders >= 3).length;
   const t4 = clients.filter(c => c.total_orders >= 4).length;
   const funnelData = [
     { name: '1 покупка', count: t1, pct: 100, color: '#6366f1' },
-    { name: '2 покупки', count: t2, pct: Math.round(t2 / t1 * 100), color: '#8b5cf6' },
-    { name: '3 покупки', count: t3, pct: Math.round(t3 / t1 * 100), color: '#a78bfa' },
-    { name: '4+ покупок', count: t4, pct: Math.round(t4 / t1 * 100), color: '#c4b5fd' },
+    { name: '2 покупки', count: t2, pct: t1 ? Math.round(t2 / t1 * 100) : 0, color: '#8b5cf6' },
+    { name: '3 покупки', count: t3, pct: t1 ? Math.round(t3 / t1 * 100) : 0, color: '#a78bfa' },
+    { name: '4+ покупок', count: t4, pct: t1 ? Math.round(t4 / t1 * 100) : 0, color: '#c4b5fd' },
   ];
 
-  // LTV по сегментах
   const segmentLTV: Record<string, { sum: number; count: number }> = {};
   clients.forEach(c => {
     if (c.rfm_segment && c.total_spent > 0) {
@@ -58,12 +81,11 @@ export default function AnalyticsPage() {
     aov: m.avg_order_value,
   }));
 
-  // Когортна таблиця
-  const cohortMonths = [...new Set(cohortSnapshots.map(c => c.cohort_month))].sort();
-  const maxMonthsSince = Math.max(...cohortSnapshots.map(c => c.months_since_first));
+  const cohortMonths = [...new Set(cohorts.map(c => c.cohort_month))].sort();
+  const maxMonthsSince = cohorts.length > 0 ? Math.max(...cohorts.map(c => c.months_since_first)) : 0;
 
   function getRetention(cohort: string, monthsSince: number): number | null {
-    const snap = cohortSnapshots.find(c => c.cohort_month === cohort && c.months_since_first === monthsSince);
+    const snap = cohorts.find(c => c.cohort_month === cohort && c.months_since_first === monthsSince);
     return snap ? snap.retention_rate : null;
   }
 
@@ -74,6 +96,8 @@ export default function AnalyticsPage() {
     if (rate >= 20) return 'bg-orange-400 text-white';
     return 'bg-red-400 text-white';
   }
+
+  if (loading) return <div className="text-center py-20 text-gray-400">Завантаження...</div>;
 
   return (
     <div className="space-y-6">
@@ -89,7 +113,6 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      {/* Метрики */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {[
           { label: 'Сер. LTV', value: `${Math.round(avgLTV).toLocaleString()} грн`, change: '+12%', up: true },
@@ -108,7 +131,6 @@ export default function AnalyticsPage() {
         ))}
       </div>
 
-      {/* Графіки */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Виручка</h2>
@@ -137,7 +159,6 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      {/* Воронка */}
       <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Воронка повторних покупок</h2>
         <div className="grid grid-cols-4 gap-4">
@@ -155,7 +176,6 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      {/* Когортна таблиця */}
       <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Когортний аналіз (% утримання)</h2>
         <div className="overflow-x-auto">
@@ -171,7 +191,7 @@ export default function AnalyticsPage() {
             </thead>
             <tbody>
               {cohortMonths.map(cohort => {
-                const size = cohortSnapshots.find(c => c.cohort_month === cohort && c.months_since_first === 0)?.cohort_size || 0;
+                const size = cohorts.find(c => c.cohort_month === cohort && c.months_since_first === 0)?.cohort_size || 0;
                 return (
                   <tr key={cohort}>
                     <td className="px-2 py-1.5 font-medium text-gray-700">{format(parseISO(cohort), 'MMM yyyy', { locale: uk })}</td>

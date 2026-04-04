@@ -1,20 +1,50 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Target, Users, Settings2 } from 'lucide-react';
-import { clients, rfmSegments, rfmConfig, getSegmentClients } from '../lib/testData';
+import { supabase } from '../lib/supabase';
+import type { RfmSegment, RfmConfig } from '../types';
+
+type ClientRow = {
+  client_id: number;
+  full_name: string;
+  rfm_segment: string | null;
+  rfm_recency: number | null;
+  rfm_frequency: number | null;
+  rfm_monetary: number | null;
+  total_orders: number;
+  total_spent: number;
+  last_order_date: string | null;
+};
 
 export default function SegmentsPage() {
   const [tab, setTab] = useState<'overview' | 'matrix' | 'config'>('overview');
   const [selectedSegment, setSelectedSegment] = useState<string | null>(null);
+  const [clients, setClients] = useState<ClientRow[]>([]);
+  const [rfmSegments, setRfmSegments] = useState<RfmSegment[]>([]);
+  const [rfmConfig, setRfmConfig] = useState<RfmConfig[]>([]);
+  const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
-  // Підрахунок клієнтів по сегментах
+  useEffect(() => {
+    async function load() {
+      const [clientsRes, segmentsRes, configRes] = await Promise.all([
+        supabase.from('clients').select('client_id, full_name, rfm_segment, rfm_recency, rfm_frequency, rfm_monetary, total_orders, total_spent, last_order_date'),
+        supabase.from('rfm_segments').select('*'),
+        supabase.from('rfm_config').select('*').order('metric').order('score', { ascending: false }),
+      ]);
+      setClients(clientsRes.data ?? []);
+      setRfmSegments(segmentsRes.data ?? []);
+      setRfmConfig(configRes.data ?? []);
+      setLoading(false);
+    }
+    load();
+  }, []);
+
   const segmentCounts: Record<string, number> = {};
   clients.forEach(c => {
     if (c.rfm_segment) segmentCounts[c.rfm_segment] = (segmentCounts[c.rfm_segment] || 0) + 1;
   });
 
-  // RFM матриця: R по Y, F по X, значення = кількість клієнтів
   const matrix: Record<string, Record<string, number>> = {};
   for (let r = 5; r >= 1; r--) {
     matrix[r] = {};
@@ -31,7 +61,9 @@ export default function SegmentsPage() {
     return 'bg-indigo-700 text-white';
   }
 
-  const segmentClients = selectedSegment ? getSegmentClients(selectedSegment) : [];
+  const segmentClients = selectedSegment ? clients.filter(c => c.rfm_segment === selectedSegment) : [];
+
+  if (loading) return <div className="text-center py-20 text-gray-400">Завантаження...</div>;
 
   return (
     <div className="space-y-6">
@@ -57,8 +89,7 @@ export default function SegmentsPage() {
           {rfmSegments.map(seg => {
             const count = segmentCounts[seg.segment_name] || 0;
             return (
-              <div key={seg.segment_name}
-                onClick={() => setSelectedSegment(seg.segment_name)}
+              <div key={seg.segment_name} onClick={() => setSelectedSegment(seg.segment_name)}
                 className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm cursor-pointer hover:shadow-md transition">
                 <div className="flex items-center gap-3 mb-3">
                   <div className="w-4 h-4 rounded-full" style={{ backgroundColor: seg.color }} />
@@ -152,30 +183,30 @@ export default function SegmentsPage() {
           {['recency', 'frequency', 'monetary'].map(metric => {
             const metricLabels: Record<string, string> = { recency: 'Давність (R)', frequency: 'Частота (F)', monetary: 'Грошовий (M)' };
             return (
-            <div key={metric} className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">{metricLabels[metric]}</h3>
-              <table className="w-full text-sm">
-                <thead>
-                  <tr>
-                    <th className="text-left pb-2 text-gray-500">Скор</th>
-                    <th className="text-right pb-2 text-gray-500">Від</th>
-                    <th className="text-right pb-2 text-gray-500">До</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {rfmConfig.filter(c => c.metric === metric).sort((a, b) => b.score - a.score).map(c => (
-                    <tr key={c.score}>
-                      <td className="py-2">
-                        <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded font-medium text-xs">{c.score}</span>
-                      </td>
-                      <td className="py-2 text-right text-gray-700">{c.min_value}</td>
-                      <td className="py-2 text-right text-gray-700">{c.max_value}</td>
+              <div key={metric} className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">{metricLabels[metric]}</h3>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr>
+                      <th className="text-left pb-2 text-gray-500">Скор</th>
+                      <th className="text-right pb-2 text-gray-500">Від</th>
+                      <th className="text-right pb-2 text-gray-500">До</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          );
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {rfmConfig.filter(c => c.metric === metric).map(c => (
+                      <tr key={c.score}>
+                        <td className="py-2">
+                          <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded font-medium text-xs">{c.score}</span>
+                        </td>
+                        <td className="py-2 text-right text-gray-700">{c.min_value}</td>
+                        <td className="py-2 text-right text-gray-700">{c.max_value}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
           })}
         </div>
       )}

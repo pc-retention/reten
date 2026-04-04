@@ -1,9 +1,28 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Settings, Save, MessageSquare, Edit2 } from 'lucide-react';
-import { settings, communicationTemplates } from '../lib/testData';
+import { supabase } from '../lib/supabase';
+import type { Setting, CommunicationTemplate } from '../types';
 
 export default function SettingsPage() {
   const [tab, setTab] = useState<'settings' | 'templates'>('settings');
+  const [settings, setSettings] = useState<Setting[]>([]);
+  const [templates, setTemplates] = useState<CommunicationTemplate[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      const [settingsRes, templatesRes] = await Promise.all([
+        supabase.from('settings').select('*').order('key'),
+        supabase.from('communication_templates').select('*').order('communication_type').order('channel'),
+      ]);
+      setSettings(settingsRes.data ?? []);
+      setTemplates(templatesRes.data ?? []);
+      setLoading(false);
+    }
+    load();
+  }, []);
+
+  if (loading) return <div className="text-center py-20 text-gray-400">Завантаження...</div>;
 
   return (
     <div className="space-y-6">
@@ -20,7 +39,7 @@ export default function SettingsPage() {
           className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-md transition ${
             tab === 'templates' ? 'bg-white shadow text-gray-900' : 'text-gray-500'
           }`}>
-          <MessageSquare className="w-4 h-4" /> Шаблони ({communicationTemplates.length})
+          <MessageSquare className="w-4 h-4" /> Шаблони ({templates.length})
         </button>
       </div>
 
@@ -58,7 +77,7 @@ export default function SettingsPage() {
 
       {tab === 'templates' && (
         <div className="space-y-3">
-          {communicationTemplates.map(t => (
+          {templates.map(t => (
             <div key={t.id} className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">

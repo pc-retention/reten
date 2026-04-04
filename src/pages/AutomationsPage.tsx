@@ -1,7 +1,10 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { RefreshCw, MessageSquare, ShoppingCart, ArrowLeftRight, Gift, Clock, CheckCircle, XCircle, SkipForward } from 'lucide-react';
-import { automationQueue, communicationLogs, communicationTemplates, winBackCandidates, clients } from '../lib/testData';
+import { supabase } from '../lib/supabase';
 import { format, parseISO } from 'date-fns';
+import type { AutomationQueueItem, CommunicationLog, CommunicationTemplate, WinBackCandidate } from '../types';
+
+type QueueRow = AutomationQueueItem & { clients: { full_name: string } | null };
 
 const tabs = [
   { key: 'replenishment', label: 'Поповнення', icon: RefreshCw },
@@ -12,50 +15,67 @@ const tabs = [
 ];
 
 const statusIcons: Record<string, React.ElementType> = {
-  pending: Clock,
-  sent: CheckCircle,
-  cancelled: XCircle,
-  skipped: SkipForward,
+  pending: Clock, sent: CheckCircle, cancelled: XCircle, skipped: SkipForward,
 };
-
 const statusColors: Record<string, string> = {
-  pending: 'text-yellow-600 bg-yellow-50',
-  sent: 'text-green-600 bg-green-50',
-  cancelled: 'text-gray-500 bg-gray-50',
-  skipped: 'text-orange-500 bg-orange-50',
+  pending: 'text-yellow-600 bg-yellow-50', sent: 'text-green-600 bg-green-50',
+  cancelled: 'text-gray-500 bg-gray-50', skipped: 'text-orange-500 bg-orange-50',
 };
 
 export default function AutomationsPage() {
   const [activeTab, setActiveTab] = useState('replenishment');
+  const [queue, setQueue] = useState<QueueRow[]>([]);
+  const [commsAll, setCommsAll] = useState<CommunicationLog[]>([]);
+  const [templatesAll, setTemplatesAll] = useState<CommunicationTemplate[]>([]);
+  const [winBack, setWinBack] = useState<WinBackCandidate[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const queueItems = automationQueue.filter(a => a.automation_type === activeTab);
-  const comms = communicationLogs.filter(c => c.communication_type === activeTab);
-  const templates = communicationTemplates.filter(t => t.communication_type === activeTab);
+  useEffect(() => {
+    async function load() {
+      const [queueRes, commsRes, templatesRes, winBackRes] = await Promise.all([
+        supabase.from('automation_queue').select('*, clients(full_name)').order('scheduled_at', { ascending: true }),
+        supabase.from('communication_log').select('*').order('sent_at', { ascending: false }),
+        supabase.from('communication_templates').select('*'),
+        supabase.from('win_back_candidates').select('*'),
+      ]);
+      setQueue((queueRes.data ?? []) as QueueRow[]);
+      setCommsAll(commsRes.data ?? []);
+      setTemplatesAll(templatesRes.data ?? []);
+      setWinBack(winBackRes.data ?? []);
+      setLoading(false);
+    }
+    load();
+  }, []);
+
+  const queueItems = queue.filter(a => a.automation_type === activeTab);
+  const comms = commsAll.filter(c => c.communication_type === activeTab);
+  const templates = templatesAll.filter(t => t.communication_type === activeTab);
 
   const sentCount = comms.length;
   const openedCount = comms.filter(c => c.opened_at).length;
   const clickedCount = comms.filter(c => c.clicked_at).length;
   const openRate = sentCount > 0 ? (openedCount / sentCount * 100).toFixed(1) : '0';
   const clickRate = sentCount > 0 ? (clickedCount / sentCount * 100).toFixed(1) : '0';
-
   const pendingCount = queueItems.filter(q => q.status === 'pending').length;
   const skippedQCount = queueItems.filter(q => q.status === 'skipped').length;
 
-  // Win-back specific data
-  const warmCount = winBackCandidates.filter(w => w.tier === 'warm').length;
-  const coldCount = winBackCandidates.filter(w => w.tier === 'cold').length;
-  const lostCount = winBackCandidates.filter(w => w.tier === 'lost').length;
+  const warmCount = winBack.filter(w => w.tier === 'warm').length;
+  const coldCount = winBack.filter(w => w.tier === 'cold').length;
+  const lostCount = winBack.filter(w => w.tier === 'lost').length;
+
+  const todaySent = commsAll.filter(c => c.sent_at?.startsWith(new Date().toISOString().slice(0, 7))).length;
+
+  if (loading) return <div className="text-center py-20 text-gray-400">Завантаження...</div>;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">Автоматизації</h1>
         <div className="flex items-center gap-3 text-sm text-gray-500">
-          <span>Відправлено сьогодні: <strong className="text-gray-900">{comms.filter(c => c.sent_at.startsWith('2026-04')).length}</strong></span>
+          <span>Відправлено цього місяця: <strong className="text-gray-900">{todaySent}</strong></span>
         </div>
       </div>
 
-      {/* Tabs */}
       <div className="flex gap-1 overflow-x-auto bg-gray-100 p-1 rounded-lg">
         {tabs.map(t => (
           <button key={t.key} onClick={() => setActiveTab(t.key)}
@@ -67,7 +87,6 @@ export default function AutomationsPage() {
         ))}
       </div>
 
-      {/* Метрики */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
           <p className="text-sm text-gray-500">Відправлено</p>
@@ -91,7 +110,6 @@ export default function AutomationsPage() {
         </div>
       </div>
 
-      {/* Win-back specific */}
       {activeTab === 'win_back' && (
         <div className="grid grid-cols-3 gap-4">
           <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
@@ -119,18 +137,16 @@ export default function AutomationsPage() {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Черга */}
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Черга ({queueItems.length})</h2>
           <div className="space-y-2 max-h-96 overflow-y-auto">
             {queueItems.length === 0 && <p className="text-sm text-gray-400">Черга порожня</p>}
             {queueItems.map(q => {
-              const client = clients.find(c => c.client_id === q.client_id);
               const StatusIcon = statusIcons[q.status] || Clock;
               return (
                 <div key={q.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-gray-900">{client?.full_name || `#${q.client_id}`}</p>
+                    <p className="text-sm font-medium text-gray-900">{q.clients?.full_name || `#${q.client_id}`}</p>
                     <p className="text-xs text-gray-500">{format(parseISO(q.scheduled_at), 'dd.MM.yyyy HH:mm')}</p>
                     {q.skip_reason && <p className="text-xs text-orange-500">{q.skip_reason}</p>}
                   </div>
@@ -143,7 +159,6 @@ export default function AutomationsPage() {
           </div>
         </div>
 
-        {/* Шаблони */}
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Шаблони ({templates.length})</h2>
           <div className="space-y-3 max-h-96 overflow-y-auto">
@@ -154,9 +169,7 @@ export default function AutomationsPage() {
                   <span className="text-xs font-mono text-gray-500">{t.id}</span>
                   <div className="flex items-center gap-2">
                     {t.ab_variant && (
-                      <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-medium">
-                        {t.ab_variant}
-                      </span>
+                      <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-medium">{t.ab_variant}</span>
                     )}
                     <span className="px-1.5 py-0.5 bg-gray-200 text-gray-600 rounded text-xs">{t.channel}</span>
                   </div>
