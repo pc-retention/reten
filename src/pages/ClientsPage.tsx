@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Search, ArrowLeft, Phone, Mail, AtSign, Tag, ShoppingCart, MessageSquare, Gift, TrendingUp } from 'lucide-react';
-import { clients, getClientById, getClientOrders, getClientCommunications, getClientLoyaltyTransactions, getClientPurchases, rfmSegments } from '../lib/testData';
+import { supabase } from '../lib/supabase';
 import { format, parseISO } from 'date-fns';
-import type { Client } from '../types';
+import type { Client, ClientOrder, CommunicationLog, LoyaltyTransaction, ClientPurchase } from '../types';
 
 const tierColors: Record<string, string> = {
   bronze: 'bg-amber-100 text-amber-800',
@@ -19,13 +19,49 @@ const segmentColors: Record<string, string> = {
   'Hibernating': '#6b7280', 'Lost': '#374151',
 };
 
-function ClientCard({ client }: { client: Client }) {
+function ClientCard({ clientId }: { clientId: number }) {
   const navigate = useNavigate();
-  const orders = getClientOrders(client.client_id);
-  const comms = getClientCommunications(client.client_id);
-  const loyalty = getClientLoyaltyTransactions(client.client_id);
-  const purchases = getClientPurchases(client.client_id);
-  const segment = rfmSegments.find(s => s.segment_name === client.rfm_segment);
+  const [client, setClient] = useState<Client | null>(null);
+  const [orders, setOrders] = useState<ClientOrder[]>([]);
+  const [comms, setComms] = useState<CommunicationLog[]>([]);
+  const [loyalty, setLoyalty] = useState<LoyaltyTransaction[]>([]);
+  const [purchases, setPurchases] = useState<ClientPurchase[]>([]);
+  const [segmentAction, setSegmentAction] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true);
+      const [clientRes, ordersRes, commsRes, loyaltyRes, purchasesRes] = await Promise.all([
+        supabase.from('clients').select('*').eq('client_id', clientId).single(),
+        supabase.from('client_orders').select('*').eq('client_id', clientId).order('order_date', { ascending: false }),
+        supabase.from('communication_log').select('*').eq('client_id', clientId).order('created_at', { ascending: false }),
+        supabase.from('loyalty_transactions').select('*').eq('client_id', clientId).order('created_at', { ascending: false }),
+        supabase.from('client_purchases').select('*').eq('client_id', clientId),
+      ]);
+
+      if (clientRes.data) {
+        setClient(clientRes.data);
+        if (clientRes.data.rfm_segment) {
+          const segRes = await supabase
+            .from('rfm_segments')
+            .select('recommended_action')
+            .eq('segment_name', clientRes.data.rfm_segment)
+            .single();
+          setSegmentAction(segRes.data?.recommended_action ?? null);
+        }
+      }
+      setOrders(ordersRes.data ?? []);
+      setComms(commsRes.data ?? []);
+      setLoyalty(loyaltyRes.data ?? []);
+      setPurchases(purchasesRes.data ?? []);
+      setLoading(false);
+    }
+    load();
+  }, [clientId]);
+
+  if (loading) return <div className="text-center py-20 text-gray-400">Завантаження...</div>;
+  if (!client) return <p className="text-center text-gray-500 mt-10">Клієнта не знайдено</p>;
 
   return (
     <div className="space-y-6">
@@ -90,9 +126,9 @@ function ClientCard({ client }: { client: Client }) {
           </div>
         </div>
 
-        {segment && (
+        {segmentAction && (
           <div className="mt-4 p-3 rounded-lg bg-gray-50">
-            <p className="text-sm text-gray-600"><strong>Рекомендація:</strong> {segment.recommended_action}</p>
+            <p className="text-sm text-gray-600"><strong>Рекомендація:</strong> {segmentAction}</p>
           </div>
         )}
       </div>
@@ -189,7 +225,22 @@ function ClientsList() {
   const [search, setSearch] = useState('');
   const [segmentFilter, setSegmentFilter] = useState('all');
   const [tierFilter, setTierFilter] = useState('all');
+  const [clients, setClients] = useState<Client[]>([]);
+  const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true);
+      const { data } = await supabase
+        .from('clients')
+        .select('*')
+        .order('total_spent', { ascending: false });
+      setClients(data ?? []);
+      setLoading(false);
+    }
+    load();
+  }, []);
 
   const filtered = clients.filter(c => {
     const matchSearch = !search ||
@@ -231,48 +282,52 @@ function ClientsList() {
         </select>
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium">Клієнт</th>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium hidden md:table-cell">Сегмент</th>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium hidden lg:table-cell">Рівень</th>
-              <th className="text-right px-4 py-3 text-gray-500 font-medium">Замовлень</th>
-              <th className="text-right px-4 py-3 text-gray-500 font-medium">Витрачено</th>
-              <th className="text-right px-4 py-3 text-gray-500 font-medium hidden md:table-cell">Останнє</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {filtered.map(c => (
-              <tr key={c.client_id} onClick={() => navigate(`/clients/${c.client_id}`)}
-                className="hover:bg-gray-50 cursor-pointer transition">
-                <td className="px-4 py-3">
-                  <p className="font-medium text-gray-900">{c.full_name}</p>
-                  <p className="text-xs text-gray-500">{c.phone || c.email || '-'}</p>
-                </td>
-                <td className="px-4 py-3 hidden md:table-cell">
-                  {c.rfm_segment && (
-                    <span className="px-2 py-0.5 rounded-full text-xs font-medium text-white" style={{ backgroundColor: segmentColors[c.rfm_segment] || '#6b7280' }}>
-                      {c.rfm_segment}
-                    </span>
-                  )}
-                </td>
-                <td className="px-4 py-3 hidden lg:table-cell">
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${tierColors[c.loyalty_tier]}`}>
-                    {c.loyalty_tier}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-right font-medium text-gray-900">{c.total_orders}</td>
-                <td className="px-4 py-3 text-right font-medium text-gray-900">{c.total_spent.toLocaleString()} грн</td>
-                <td className="px-4 py-3 text-right text-gray-500 hidden md:table-cell">
-                  {c.last_order_date ? format(parseISO(c.last_order_date), 'dd.MM.yyyy') : '-'}
-                </td>
+      {loading ? (
+        <div className="text-center py-20 text-gray-400">Завантаження...</div>
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">Клієнт</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium hidden md:table-cell">Сегмент</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium hidden lg:table-cell">Рівень</th>
+                <th className="text-right px-4 py-3 text-gray-500 font-medium">Замовлень</th>
+                <th className="text-right px-4 py-3 text-gray-500 font-medium">Витрачено</th>
+                <th className="text-right px-4 py-3 text-gray-500 font-medium hidden md:table-cell">Останнє</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {filtered.map(c => (
+                <tr key={c.client_id} onClick={() => navigate(`/clients/${c.client_id}`)}
+                  className="hover:bg-gray-50 cursor-pointer transition">
+                  <td className="px-4 py-3">
+                    <p className="font-medium text-gray-900">{c.full_name}</p>
+                    <p className="text-xs text-gray-500">{c.phone || c.email || '-'}</p>
+                  </td>
+                  <td className="px-4 py-3 hidden md:table-cell">
+                    {c.rfm_segment && (
+                      <span className="px-2 py-0.5 rounded-full text-xs font-medium text-white" style={{ backgroundColor: segmentColors[c.rfm_segment] || '#6b7280' }}>
+                        {c.rfm_segment}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 hidden lg:table-cell">
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${tierColors[c.loyalty_tier]}`}>
+                      {c.loyalty_tier}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-right font-medium text-gray-900">{c.total_orders}</td>
+                  <td className="px-4 py-3 text-right font-medium text-gray-900">{c.total_spent.toLocaleString()} грн</td>
+                  <td className="px-4 py-3 text-right text-gray-500 hidden md:table-cell">
+                    {c.last_order_date ? format(parseISO(c.last_order_date), 'dd.MM.yyyy') : '-'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -280,11 +335,6 @@ function ClientsList() {
 export default function ClientsPage() {
   const { id } = useParams();
 
-  if (id) {
-    const client = getClientById(Number(id));
-    if (!client) return <p className="text-center text-gray-500 mt-10">Клієнта не знайдено</p>;
-    return <ClientCard client={client} />;
-  }
-
+  if (id) return <ClientCard clientId={Number(id)} />;
   return <ClientsList />;
 }
