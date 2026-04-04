@@ -1,8 +1,18 @@
+import { useState, useEffect } from 'react';
 import { BarChart3, Users, ShoppingCart, TrendingUp, DollarSign, ArrowUpRight, ArrowDownRight, Activity } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
-import { metricsDaily, clients, syncLogs } from '../lib/testData';
+import { supabase } from '../lib/supabase';
 import { format, parseISO } from 'date-fns';
 import { uk } from 'date-fns/locale';
+import type { MetricsDaily, SyncLog } from '../types';
+
+type ClientStats = {
+  is_active: boolean;
+  total_spent: number;
+  avg_order_value: number;
+  total_orders: number;
+  rfm_segment: string | null;
+};
 
 function StatCard({ title, value, subtitle, icon: Icon, trend, trendValue }: {
   title: string; value: string; subtitle?: string; icon: React.ElementType;
@@ -28,7 +38,34 @@ function StatCard({ title, value, subtitle, icon: Icon, trend, trendValue }: {
   );
 }
 
+const segmentColors: Record<string, string> = {
+  'Champions': '#22c55e', 'Loyal': '#3b82f6', 'Potential Loyal': '#8b5cf6',
+  'New Customers': '#06b6d4', 'Promising': '#f59e0b', 'Need Attention': '#f97316',
+  'About To Sleep': '#ef4444', 'At Risk': '#dc2626', "Can't Lose Them": '#991b1b',
+  'Hibernating': '#6b7280', 'Lost': '#374151',
+};
+
 export default function OverviewPage() {
+  const [metrics, setMetrics] = useState<MetricsDaily[]>([]);
+  const [clients, setClients] = useState<ClientStats[]>([]);
+  const [syncLogs, setSyncLogs] = useState<SyncLog[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      const [metricsRes, clientsRes, syncRes] = await Promise.all([
+        supabase.from('metrics_daily').select('*').order('date', { ascending: true }).limit(30),
+        supabase.from('clients').select('is_active, total_spent, avg_order_value, total_orders, rfm_segment'),
+        supabase.from('sync_log').select('*').order('started_at', { ascending: false }).limit(20),
+      ]);
+      setMetrics(metricsRes.data ?? []);
+      setClients(clientsRes.data ?? []);
+      setSyncLogs(syncRes.data ?? []);
+      setLoading(false);
+    }
+    load();
+  }, []);
+
   const totalClients = clients.length;
   const activeClients = clients.filter(c => c.is_active).length;
   const avgLTV = clients.filter(c => c.total_spent > 0).reduce((s, c) => s + c.total_spent, 0) / Math.max(clients.filter(c => c.total_spent > 0).length, 1);
@@ -36,46 +73,37 @@ export default function OverviewPage() {
   const retentionRate = (clients.filter(c => c.total_orders >= 2).length / Math.max(totalClients, 1) * 100);
   const churnRate = (clients.filter(c => !c.is_active).length / Math.max(totalClients, 1) * 100);
 
-  const last7 = metricsDaily.slice(-7);
-  const prev7 = metricsDaily.slice(-14, -7);
+  const last7 = metrics.slice(-7);
+  const prev7 = metrics.slice(-14, -7);
   const revNow = last7.reduce((s, m) => s + m.total_revenue, 0);
   const revPrev = prev7.reduce((s, m) => s + m.total_revenue, 0);
   const revTrend = revPrev > 0 ? ((revNow - revPrev) / revPrev * 100).toFixed(1) : '0';
 
-  const chartData = metricsDaily.slice(-14).map(m => ({
+  const chartData = metrics.slice(-14).map(m => ({
     date: format(parseISO(m.date), 'd MMM', { locale: uk }),
     revenue: m.total_revenue,
     orders: m.total_orders,
     newClients: m.new_clients,
   }));
 
-  // Воронка повторних покупок
   const total1 = clients.filter(c => c.total_orders >= 1).length;
   const total2 = clients.filter(c => c.total_orders >= 2).length;
   const total3 = clients.filter(c => c.total_orders >= 3).length;
   const total4 = clients.filter(c => c.total_orders >= 4).length;
   const funnelData = [
     { name: '1-ша покупка', value: total1, pct: 100 },
-    { name: '2-га покупка', value: total2, pct: Math.round(total2 / total1 * 100) },
-    { name: '3-тя покупка', value: total3, pct: Math.round(total3 / total1 * 100) },
-    { name: '4-та покупка', value: total4, pct: Math.round(total4 / total1 * 100) },
+    { name: '2-га покупка', value: total2, pct: total1 ? Math.round(total2 / total1 * 100) : 0 },
+    { name: '3-тя покупка', value: total3, pct: total1 ? Math.round(total3 / total1 * 100) : 0 },
+    { name: '4-та покупка', value: total4, pct: total1 ? Math.round(total4 / total1 * 100) : 0 },
   ];
 
-  // Топ-5 сегментів
   const segmentCounts: Record<string, number> = {};
   clients.forEach(c => {
     if (c.rfm_segment) segmentCounts[c.rfm_segment] = (segmentCounts[c.rfm_segment] || 0) + 1;
   });
-  const topSegments = Object.entries(segmentCounts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5);
+  const topSegments = Object.entries(segmentCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
 
-  const segmentColors: Record<string, string> = {
-    'Champions': '#22c55e', 'Loyal': '#3b82f6', 'Potential Loyal': '#8b5cf6',
-    'New Customers': '#06b6d4', 'Promising': '#f59e0b', 'Need Attention': '#f97316',
-    'About To Sleep': '#ef4444', 'At Risk': '#dc2626', "Can't Lose Them": '#991b1b',
-    'Hibernating': '#6b7280', 'Lost': '#374151',
-  };
+  if (loading) return <div className="text-center py-20 text-gray-400">Завантаження...</div>;
 
   return (
     <div className="space-y-6">
@@ -84,7 +112,6 @@ export default function OverviewPage() {
         <p className="text-sm text-gray-500">{format(new Date(), 'd MMMM yyyy', { locale: uk })}</p>
       </div>
 
-      {/* Метрики */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-4">
         <StatCard icon={DollarSign} title="Сер. LTV" value={`${Math.round(avgLTV).toLocaleString()} грн`} trend="up" trendValue={`${revTrend}%`} />
         <StatCard icon={ShoppingCart} title="Сер. чек" value={`${Math.round(avgAOV)} грн`} trend="up" trendValue="5.2%" />
@@ -94,7 +121,6 @@ export default function OverviewPage() {
         <StatCard icon={BarChart3} title="Замовлень (7д)" value={last7.reduce((s, m) => s + m.total_orders, 0).toString()} trend="up" trendValue="8%" />
       </div>
 
-      {/* Графіки */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Виручка (14 днів)</h2>
@@ -130,9 +156,7 @@ export default function OverviewPage() {
         </div>
       </div>
 
-      {/* Воронка + сегменти + синхронізація */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Воронка */}
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Воронка повторних покупок</h2>
           <div className="space-y-3">
@@ -143,17 +167,14 @@ export default function OverviewPage() {
                   <span className="font-medium text-gray-900">{item.value} ({item.pct}%)</span>
                 </div>
                 <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-all"
-                    style={{ width: `${item.pct}%`, backgroundColor: ['#6366f1', '#8b5cf6', '#a78bfa', '#c4b5fd'][i] }}
-                  />
+                  <div className="h-full rounded-full transition-all"
+                    style={{ width: `${item.pct}%`, backgroundColor: ['#6366f1', '#8b5cf6', '#a78bfa', '#c4b5fd'][i] }} />
                 </div>
               </div>
             ))}
           </div>
         </div>
 
-        {/* Топ сегменти */}
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Топ-5 сегментів</h2>
           <div className="space-y-3">
@@ -167,7 +188,6 @@ export default function OverviewPage() {
           </div>
         </div>
 
-        {/* Статус синхронізації */}
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Синхронізація</h2>
           <div className="space-y-4">

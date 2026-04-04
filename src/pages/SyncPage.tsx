@@ -1,25 +1,41 @@
+import { useState, useEffect } from 'react';
 import { CheckCircle, AlertCircle, Clock, Play } from 'lucide-react';
-import { syncLogs } from '../lib/testData';
+import { supabase } from '../lib/supabase';
 import { format, parseISO } from 'date-fns';
+import type { SyncLog } from '../types';
 
 const statusIcon: Record<string, React.ElementType> = {
-  success: CheckCircle,
-  error: AlertCircle,
+  success: CheckCircle, error: AlertCircle,
 };
-
 const statusColor: Record<string, string> = {
-  success: 'text-green-600 bg-green-50',
-  error: 'text-red-600 bg-red-50',
+  success: 'text-green-600 bg-green-50', error: 'text-red-600 bg-red-50',
 };
+const channelLabels: Record<string, string> = { webhook: 'Вебхук', hourly: 'Щогодинна', manual: 'Ручна' };
 
 export default function SyncPage() {
-  const channelLabels: Record<string, string> = { webhook: 'Вебхук', hourly: 'Щогодинна', manual: 'Ручна' };
+  const [syncLogs, setSyncLogs] = useState<SyncLog[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      const { data } = await supabase
+        .from('sync_log')
+        .select('*')
+        .order('started_at', { ascending: false });
+      setSyncLogs(data ?? []);
+      setLoading(false);
+    }
+    load();
+  }, []);
+
   const channelStats = ['webhook', 'hourly', 'manual'].map(ch => {
     const logs = syncLogs.filter(s => s.sync_type === ch);
     const last = logs[0];
     const totalOrders = logs.reduce((s, l) => s + l.orders_new, 0);
-    return { channel: ch, last, totalOrders, logsCount: logs.length };
+    return { channel: ch, last, totalOrders };
   });
+
+  if (loading) return <div className="text-center py-20 text-gray-400">Завантаження...</div>;
 
   return (
     <div className="space-y-6">
@@ -30,12 +46,11 @@ export default function SyncPage() {
         </button>
       </div>
 
-      {/* Канали */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {channelStats.map(({ channel, last, totalOrders }) => (
           <div key={channel} className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">{channelLabels[channel] || channel}</h3>
+              <h3 className="text-lg font-semibold text-gray-900">{channelLabels[channel]}</h3>
               {last && (
                 <span className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${statusColor[last.status]}`}>
                   {last.status === 'success' ? <CheckCircle className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
@@ -46,9 +61,7 @@ export default function SyncPage() {
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <span className="text-gray-500">Остання синхр.</span>
-                <span className="text-gray-900 font-medium">
-                  {last ? format(parseISO(last.started_at), 'dd.MM HH:mm') : '-'}
-                </span>
+                <span className="text-gray-900 font-medium">{last ? format(parseISO(last.started_at), 'dd.MM HH:mm') : '-'}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-500">Нових замовлень</span>
@@ -63,7 +76,6 @@ export default function SyncPage() {
         ))}
       </div>
 
-      {/* Лог */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <h3 className="px-6 py-4 text-lg font-semibold text-gray-900 border-b border-gray-100">Лог синхронізації</h3>
         <table className="w-full text-sm">

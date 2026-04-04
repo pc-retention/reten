@@ -1,11 +1,28 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Package, AlertTriangle, Plus, Edit2, Trash2 } from 'lucide-react';
-import { products, unknownBarcodes } from '../lib/testData';
+import { supabase } from '../lib/supabase';
+import type { Product, UnknownBarcode } from '../types';
 
 export default function ProductsPage() {
   const [tab, setTab] = useState<'products' | 'unknown'>('products');
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
+  const [products, setProducts] = useState<Product[]>([]);
+  const [unknownBarcodes, setUnknownBarcodes] = useState<UnknownBarcode[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      const [productsRes, unknownRes] = await Promise.all([
+        supabase.from('products').select('*').order('name', { ascending: true }),
+        supabase.from('unknown_barcodes').select('*').order('seen_count', { ascending: false }),
+      ]);
+      setProducts(productsRes.data ?? []);
+      setUnknownBarcodes(unknownRes.data ?? []);
+      setLoading(false);
+    }
+    load();
+  }, []);
 
   const categories = [...new Set(products.map(p => p.category).filter(Boolean))];
 
@@ -24,7 +41,6 @@ export default function ProductsPage() {
         </button>
       </div>
 
-      {/* Tabs */}
       <div className="flex gap-1 bg-gray-100 p-1 rounded-lg w-fit">
         <button onClick={() => setTab('products')}
           className={`px-4 py-2 text-sm font-medium rounded-md transition ${tab === 'products' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>
@@ -36,11 +52,12 @@ export default function ProductsPage() {
         </button>
       </div>
 
-      {tab === 'products' ? (
+      {loading ? (
+        <div className="text-center py-20 text-gray-400">Завантаження...</div>
+      ) : tab === 'products' ? (
         <>
           <div className="flex flex-wrap gap-3">
-            <input
-              type="text" placeholder="Пошук за назвою або штрихкодом..."
+            <input type="text" placeholder="Пошук за назвою або штрихкодом..."
               value={search} onChange={e => setSearch(e.target.value)}
               className="flex-1 min-w-[200px] px-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />

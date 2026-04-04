@@ -1,30 +1,56 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Gem, TrendingUp, Settings2 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
-import { clients, loyaltyTiers, loyaltyTransactions } from '../lib/testData';
+import { supabase } from '../lib/supabase';
 import { format, parseISO } from 'date-fns';
+import type { LoyaltyTier, LoyaltyTransaction } from '../types';
+
+type ClientLoyalty = {
+  client_id: number;
+  full_name: string;
+  loyalty_tier: string;
+  loyalty_points: number;
+};
+
+type TransactionRow = LoyaltyTransaction & {
+  clients: { full_name: string } | null;
+};
 
 const tierColors: Record<string, string> = {
-  bronze: '#d97706',
-  silver: '#6b7280',
-  gold: '#eab308',
-  platinum: '#7c3aed',
+  bronze: '#d97706', silver: '#6b7280', gold: '#eab308', platinum: '#7c3aed',
 };
 
 export default function LoyaltyPage() {
   const [tab, setTab] = useState<'overview' | 'transactions' | 'config'>('overview');
+  const [clients, setClients] = useState<ClientLoyalty[]>([]);
+  const [tiers, setTiers] = useState<LoyaltyTier[]>([]);
+  const [transactions, setTransactions] = useState<TransactionRow[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // Розподіл по рівнях
+  useEffect(() => {
+    async function load() {
+      const [clientsRes, tiersRes, txRes] = await Promise.all([
+        supabase.from('clients').select('client_id, full_name, loyalty_tier, loyalty_points').order('loyalty_points', { ascending: false }),
+        supabase.from('loyalty_tiers').select('*').order('min_total_spent', { ascending: true }),
+        supabase.from('loyalty_transactions').select('*, clients(full_name)').order('created_at', { ascending: false }),
+      ]);
+      setClients(clientsRes.data ?? []);
+      setTiers(tiersRes.data ?? []);
+      setTransactions((txRes.data ?? []) as TransactionRow[]);
+      setLoading(false);
+    }
+    load();
+  }, []);
+
   const tierCounts: Record<string, number> = { bronze: 0, silver: 0, gold: 0, platinum: 0 };
   clients.forEach(c => { tierCounts[c.loyalty_tier] = (tierCounts[c.loyalty_tier] || 0) + 1; });
 
-  const pieData = Object.entries(tierCounts).map(([name, value]) => ({
-    name, value, color: tierColors[name],
-  }));
-
+  const pieData = Object.entries(tierCounts).map(([name, value]) => ({ name, value, color: tierColors[name] }));
   const totalPoints = clients.reduce((s, c) => s + c.loyalty_points, 0);
   const avgPoints = Math.round(totalPoints / Math.max(clients.length, 1));
-  const participationRate = (clients.filter(c => c.loyalty_points > 0).length / clients.length * 100).toFixed(1);
+  const participationRate = (clients.filter(c => c.loyalty_points > 0).length / Math.max(clients.length, 1) * 100).toFixed(1);
+
+  if (loading) return <div className="text-center py-20 text-gray-400">Завантаження...</div>;
 
   return (
     <div className="space-y-6">
@@ -62,17 +88,17 @@ export default function LoyaltyPage() {
             </div>
             <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
               <p className="text-sm text-gray-500">Транзакцій</p>
-              <p className="text-2xl font-bold text-gray-900">{loyaltyTransactions.length}</p>
+              <p className="text-2xl font-bold text-gray-900">{transactions.length}</p>
             </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Pie chart */}
             <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Розподіл по рівнях</h2>
               <ResponsiveContainer width="100%" height={280}>
                 <PieChart>
-                  <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={4} dataKey="value" label={({ name, value }) => `${name}: ${value}`}>
+                  <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={4} dataKey="value"
+                    label={({ name, value }) => `${name}: ${value}`}>
                     {pieData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
                   </Pie>
                   <Tooltip />
@@ -80,11 +106,10 @@ export default function LoyaltyPage() {
               </ResponsiveContainer>
             </div>
 
-            {/* Топ клієнти */}
             <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Топ-10 по балах</h2>
               <div className="space-y-2">
-                {[...clients].sort((a, b) => b.loyalty_points - a.loyalty_points).slice(0, 10).map((c, i) => (
+                {clients.slice(0, 10).map((c, i) => (
                   <div key={c.client_id} className="flex items-center gap-3 py-2 border-b border-gray-50">
                     <span className="text-xs text-gray-400 w-5">{i + 1}.</span>
                     <div className="flex-1">
@@ -118,27 +143,24 @@ export default function LoyaltyPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {[...loyaltyTransactions].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).map(t => {
-                const client = clients.find(c => c.client_id === t.client_id);
-                return (
-                  <tr key={t.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 text-gray-500">{format(parseISO(t.created_at), 'dd.MM.yyyy')}</td>
-                    <td className="px-4 py-3 font-medium text-gray-900">{client?.full_name || '-'}</td>
-                    <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                        t.transaction_type === 'earn' ? 'bg-green-100 text-green-700' :
-                        t.transaction_type === 'spend' ? 'bg-red-100 text-red-700' :
-                        t.transaction_type === 'bonus' ? 'bg-purple-100 text-purple-700' :
-                        'bg-gray-100 text-gray-700'
-                      }`}>{{ earn: 'Нарахування', spend: 'Списання', bonus: 'Бонус', expire: 'Згорання' }[t.transaction_type] || t.transaction_type}</span>
-                    </td>
-                    <td className="px-4 py-3 text-gray-600">{t.reason}</td>
-                    <td className={`px-4 py-3 text-right font-bold ${t.points >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                      {t.points > 0 ? '+' : ''}{t.points}
-                    </td>
-                  </tr>
-                );
-              })}
+              {transactions.map(t => (
+                <tr key={t.id} className="hover:bg-gray-50">
+                  <td className="px-4 py-3 text-gray-500">{format(parseISO(t.created_at), 'dd.MM.yyyy')}</td>
+                  <td className="px-4 py-3 font-medium text-gray-900">{t.clients?.full_name || '-'}</td>
+                  <td className="px-4 py-3">
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                      t.transaction_type === 'earn' ? 'bg-green-100 text-green-700' :
+                      t.transaction_type === 'spend' ? 'bg-red-100 text-red-700' :
+                      t.transaction_type === 'bonus' ? 'bg-purple-100 text-purple-700' :
+                      'bg-gray-100 text-gray-700'
+                    }`}>{{ earn: 'Нарахування', spend: 'Списання', bonus: 'Бонус', expire: 'Згорання' }[t.transaction_type] || t.transaction_type}</span>
+                  </td>
+                  <td className="px-4 py-3 text-gray-600">{t.reason}</td>
+                  <td className={`px-4 py-3 text-right font-bold ${t.points >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                    {t.points > 0 ? '+' : ''}{t.points}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -146,7 +168,7 @@ export default function LoyaltyPage() {
 
       {tab === 'config' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {loyaltyTiers.map(tier => (
+          {tiers.map(tier => (
             <div key={tier.tier_name} className="bg-white rounded-xl border-2 shadow-sm p-6" style={{ borderColor: tierColors[tier.tier_name] }}>
               <div className="flex items-center gap-2 mb-4">
                 <Gem className="w-5 h-5" style={{ color: tierColors[tier.tier_name] }} />
