@@ -769,8 +769,7 @@ $$ LANGUAGE plpgsql;
 
 -- Налаштування
 INSERT INTO settings (key, value, description) VALUES
-  ('auth_admin_email', 'admin@reten.app', 'Email адміністратора для входу в дашборд'),
-  ('auth_admin_username', 'admin', 'Ім’я адміністратора для входу в дашборд'),
+  ('dashboard_password_hash', 'sha256$9b6ca26a9c8b04ab61b1960b9479bfc9$7c9c9126e8bd40992ec47b9527b3af0ce47861b71cbd540d55a7dc594a0d4c22', 'SHA-256 хеш пароля адміністратора для входу в дашборд'),
   ('min_communication_interval_days', '3', 'Мін. днів між повідомленнями клієнту'),
   ('win_back_warm_days', '30', 'Днів без покупки для warm win-back'),
   ('win_back_cold_days', '60', 'Днів без покупки для cold win-back'),

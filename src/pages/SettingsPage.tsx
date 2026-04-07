@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { EyeOff, KeyRound, LogOut, MessageSquare, Save, Settings, Shield } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { ADMIN_EMAIL_SETTING_KEY, ADMIN_USERNAME_SETTING_KEY, useAuth } from '../lib/auth';
+import { DASHBOARD_PASSWORD_SETTING_KEY, LEGACY_AUTH_SETTING_KEYS, createDashboardPasswordHash, useAuth } from '../lib/auth';
 import { hideableNavItems } from '../lib/navigation';
 import { supabase } from '../lib/supabase';
 import { fetchCommunicationTemplatesListRpc, fetchSettingsListRpc } from '../lib/serverQueries';
@@ -11,7 +11,7 @@ type SettingValues = Record<string, string>;
 type VisibilityValues = Record<string, boolean>;
 
 export default function SettingsPage() {
-  const { signOut } = useAuth();
+  const { refreshPasswordHash, signOut } = useAuth();
   const [tab, setTab] = useState<'settings' | 'security' | 'templates'>('settings');
   const [settings, setSettings] = useState<Setting[]>([]);
   const [templates, setTemplates] = useState<CommunicationTemplate[]>([]);
@@ -30,7 +30,7 @@ export default function SettingsPage() {
   );
 
   const hiddenSettingKeys = useMemo(
-    () => new Set([...hideableKeys, ADMIN_EMAIL_SETTING_KEY, ADMIN_USERNAME_SETTING_KEY]),
+    () => new Set([...hideableKeys, DASHBOARD_PASSWORD_SETTING_KEY, ...LEGACY_AUTH_SETTING_KEYS]),
     [hideableKeys],
   );
 
@@ -130,13 +130,18 @@ export default function SettingsPage() {
 
     setSavingPassword(true);
 
-    const { error } = await supabase.auth.updateUser({
-      password: newPassword,
+    const nextPasswordHash = await createDashboardPasswordHash(newPassword);
+
+    const { error } = await supabase.rpc('upsert_public_setting', {
+      p_key: DASHBOARD_PASSWORD_SETTING_KEY,
+      p_value: nextPasswordHash,
+      p_description: 'SHA-256 хеш пароля адміністратора для входу в дашборд',
     });
 
     if (error) {
       toast.error('Не вдалося оновити пароль');
     } else {
+      await refreshPasswordHash();
       setNewPassword('');
       setConfirmPassword('');
       toast.success('Пароль оновлено');
@@ -269,7 +274,7 @@ export default function SettingsPage() {
                 Пароль адміністратора
               </div>
               <p className="mt-1 text-sm text-slate-500">
-                Вхід у дашборд працює лише по паролю для внутрішнього адміністраторського акаунта.
+                Вхід у дашборд працює лише по паролю, без email і без окремого логіну.
               </p>
             </div>
 
@@ -330,7 +335,7 @@ export default function SettingsPage() {
               Пам’ятай
             </div>
             <div className="mt-3 space-y-3 text-sm leading-6 text-amber-900/85">
-              <p>Пароль змінюється для поточного адміністратора Supabase Auth.</p>
+              <p>Пароль зберігається як прихований hash у системних налаштуваннях.</p>
               <p>Після зміни використовуй новий пароль для всіх наступних входів.</p>
               <p>Пароль уводиться одразу на стартовому екрані, без додаткового логіну.</p>
             </div>
