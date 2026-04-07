@@ -1,6 +1,8 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { HeartHandshake, Menu, X } from 'lucide-react';
+import { HeartHandshake, LogOut, Menu, X } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { useAuth } from '../lib/auth';
 import { appNavItems } from '../lib/navigation';
 import { supabase } from '../lib/supabase';
 
@@ -13,6 +15,7 @@ type VisibilityMap = Record<string, boolean>;
 export default function Layout({ children }: LayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [visibilityMap, setVisibilityMap] = useState<VisibilityMap>({});
+  const { adminUsername, signOut } = useAuth();
 
   useEffect(() => {
     async function loadVisibility() {
@@ -53,6 +56,11 @@ export default function Layout({ children }: LayoutProps) {
     [visibilityMap],
   );
 
+  async function handleSignOut() {
+    await signOut();
+    toast.success('Сесію завершено');
+  }
+
   return (
     <div className="min-h-screen bg-[#f4f5fb]">
       {sidebarOpen && (
@@ -64,7 +72,7 @@ export default function Layout({ children }: LayoutProps) {
 
       <aside
         className={`
-          fixed top-0 left-0 z-40 h-full w-[280px] bg-[#212c41] text-white
+          fixed top-0 left-0 z-40 flex h-full w-[280px] flex-col bg-[#212c41] text-white
           transform transition-transform duration-200 ease-in-out
           lg:translate-x-0 shadow-[0_20px_80px_rgba(15,23,42,0.28)]
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
@@ -85,7 +93,8 @@ export default function Layout({ children }: LayoutProps) {
           </button>
         </div>
 
-        <nav className="flex h-[calc(100%-88px)] flex-col gap-1 overflow-y-auto px-4 py-5">
+        <nav className="flex-1 overflow-y-auto px-4 py-5">
+          <div className="flex flex-col gap-1">
           {visibleNavItems.map((item) => (
             <NavLink
               key={item.path}
@@ -104,7 +113,19 @@ export default function Layout({ children }: LayoutProps) {
               <span className="flex-1">{item.label}</span>
             </NavLink>
           ))}
+          </div>
         </nav>
+
+        <div className="border-t border-white/10 px-4 py-4">
+          <div className="mb-3 truncate px-2 text-xs text-white/55">Логін: {adminUsername}</div>
+          <button
+            onClick={() => void handleSignOut()}
+            className="flex w-full items-center gap-3 rounded-[18px] px-4 py-3 text-sm font-medium text-white/78 transition hover:bg-white/6 hover:text-white"
+          >
+            <LogOut size={18} />
+            Вийти
+          </button>
+        </div>
       </aside>
 
       <div className="sticky top-0 z-20 flex items-center gap-3 border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur lg:hidden">

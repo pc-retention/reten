@@ -1,10 +1,19 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Search, ArrowLeft, Phone, Mail, AtSign, Tag, ShoppingCart, MessageSquare, Gift, TrendingUp, ChevronLeft, ChevronRight, ArrowDown, ArrowUp } from 'lucide-react';
-import { supabase } from '../lib/supabase';
 import { format, parseISO } from 'date-fns';
 import type { Client, ClientOrder, CommunicationLog, LoyaltyTransaction, ClientPurchase } from '../types';
-import { fetchClientsPageRpc, fetchFilteredRemindersRpc, fetchRfmSegmentsListRpc } from '../lib/serverQueries';
+import {
+  fetchClientByIdRpc,
+  fetchClientCommsRpc,
+  fetchClientLoyaltyTransactionsRpc,
+  fetchClientOrdersRpc,
+  fetchClientsPageRpc,
+  fetchFilteredRemindersRpc,
+  fetchRfmSegmentActionRpc,
+  fetchRfmSegmentsListRpc,
+  updateClientActiveRpc,
+} from '../lib/serverQueries';
 
 const PAGE_SIZE = 100;
 
@@ -60,27 +69,23 @@ function ClientCard({ clientId }: { clientId: number }) {
     async function load() {
       setLoading(true);
       const [clientRes, ordersRes, commsRes, loyaltyRes, purchasesRes] = await Promise.all([
-        supabase.from('clients').select('*').eq('client_id', clientId).single(),
-        supabase.from('client_orders').select('*').eq('client_id', clientId).order('order_date', { ascending: false }).limit(50),
-        supabase.from('communication_log').select('*').eq('client_id', clientId).order('sent_at', { ascending: false }).limit(50),
-        supabase.from('loyalty_transactions').select('*').eq('client_id', clientId).order('created_at', { ascending: false }).limit(50),
+        fetchClientByIdRpc(clientId),
+        fetchClientOrdersRpc(clientId),
+        fetchClientCommsRpc(clientId),
+        fetchClientLoyaltyTransactionsRpc(clientId),
         fetchFilteredRemindersRpc('', '', clientId),
       ]);
 
       if (clientRes.data) {
         setClient(clientRes.data);
         if (clientRes.data.rfm_segment) {
-          const segRes = await supabase
-            .from('rfm_segments')
-            .select('recommended_action')
-            .eq('segment_name', clientRes.data.rfm_segment)
-            .single();
-          setSegmentAction(segRes.data?.recommended_action ?? null);
+          const segRes = await fetchRfmSegmentActionRpc(clientRes.data.rfm_segment);
+          setSegmentAction(segRes.data ?? null);
         }
       }
-      setOrders(ordersRes.data ?? []);
-      setComms(commsRes.data ?? []);
-      setLoyalty(loyaltyRes.data ?? []);
+      setOrders(clientRes.error ? [] : ordersRes.data);
+      setComms(clientRes.error ? [] : commsRes.data);
+      setLoyalty(clientRes.error ? [] : loyaltyRes.data);
       setPurchases((purchasesRes.data ?? []) as ClientReminderRow[]);
       setLoading(false);
     }
@@ -338,7 +343,7 @@ function ClientsList() {
     e.stopPropagation();
     setToggling(c.client_id);
     const newVal = !c.is_active;
-    await supabase.from('clients').update({ is_active: newVal }).eq('client_id', c.client_id);
+    await updateClientActiveRpc(c.client_id, newVal);
     setClients(prev => prev.map(cl => cl.client_id === c.client_id ? { ...cl, is_active: newVal } : cl));
     setTotal(prev => prev - 1); // it'll disappear from the current tab
     setToggling(null);

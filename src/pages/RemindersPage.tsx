@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Bell, Clock, CheckCircle, Send, AlertTriangle, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { supabase } from '../lib/supabase';
 import { format, parseISO } from 'date-fns';
 import type { ClientPurchase } from '../types';
 import { getDefaultReminderDateRange, getReminderStatus, getTodayDateKey } from '../lib/reminders';
-import { fetchFilteredRemindersRpc } from '../lib/serverQueries';
+import { deleteClientPurchaseRpc, fetchFilteredRemindersRpc } from '../lib/serverQueries';
 
 type ReminderRow = ClientPurchase & {
   clients: { full_name: string; phone: string | null } | null;
@@ -44,7 +43,7 @@ export default function RemindersPage() {
 
   async function deleteReminder(id: string) {
     if (!confirm('Видалити це нагадування?')) return;
-    const { error } = await supabase.from('client_purchases').delete().eq('id', id);
+    const { error } = await deleteClientPurchaseRpc(id);
     if (error) {
       toast.error('Помилка видалення');
     } else {
