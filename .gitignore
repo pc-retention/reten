@@ -2,17 +2,11 @@
 AGENT.md
 CLAUDE.md
 README.md
-n8n/procare-full-sync.json
+n8n/
 prom.md
 inspect.js
 inspect_clients.js
 scripts/
-n8n/01-sync-products.json
-n8n/02-sync-buyers.json
-n8n/03-sync-orders.json
-n8n/03-sync-orders-batches.json
-n8n/04-sync-sources.json
-n8n/workflow_analysis.md
 
 # Logs
 logs
