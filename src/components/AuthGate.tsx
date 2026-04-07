@@ -1,5 +1,5 @@
-import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
-import { LockKeyhole, LogIn, LogOut, User } from 'lucide-react';
+import { type FormEvent, type ReactNode, useState } from 'react';
+import { LockKeyhole, LogIn, LogOut } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../lib/auth';
 import { supabase } from '../lib/supabase';
@@ -9,26 +9,13 @@ interface AuthGateProps {
 }
 
 export default function AuthGate({ children }: AuthGateProps) {
-  const { adminEmail, adminUsername, loading, session, signOut } = useAuth();
-  const [username, setUsername] = useState(adminUsername);
+  const { adminEmail, loading, session, signOut } = useAuth();
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    setUsername(adminUsername);
-  }, [adminUsername]);
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
-
-    const normalizedUsername = username.trim().toLowerCase();
-
-    if (normalizedUsername !== adminUsername) {
-      toast.error('Невірне ім’я входу');
-      setSubmitting(false);
-      return;
-    }
 
     const { error } = await supabase.auth.signInWithPassword({
       email: adminEmail,
@@ -37,7 +24,7 @@ export default function AuthGate({ children }: AuthGateProps) {
 
     if (error) {
       toast.error(error.message === 'Invalid login credentials'
-        ? 'Невірне ім’я входу або пароль'
+        ? 'Невірний пароль'
         : 'Не вдалося увійти');
     } else {
       toast.success('Вхід виконано');
@@ -73,25 +60,10 @@ export default function AuthGate({ children }: AuthGateProps) {
             </div>
             <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Вхід адміністратора</h1>
             <p className="mt-2 text-sm leading-6 text-slate-500">
-              Доступ до дашборду відкритий лише для авторизованого адміністратора Supabase Auth.
+              Доступ до дашборду відкритий лише після введення пароля адміністратора.
             </p>
 
             <form onSubmit={handleLogin} className="mt-8 space-y-4">
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-slate-700">Ім’я входу</span>
-                <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                  <User className="h-4 w-4 text-slate-400" />
-                  <input
-                    type="text"
-                    autoComplete="username"
-                    value={username}
-                    onChange={(event) => setUsername(event.target.value)}
-                    className="w-full bg-transparent text-sm text-slate-900 outline-none"
-                    placeholder={adminUsername}
-                  />
-                </div>
-              </label>
-
               <label className="block">
                 <span className="mb-1.5 block text-sm font-medium text-slate-700">Пароль</span>
                 <input
@@ -113,10 +85,6 @@ export default function AuthGate({ children }: AuthGateProps) {
                 Увійти
               </button>
             </form>
-
-            <div className="mt-6 rounded-2xl bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-500">
-              Очікуване ім’я входу: <span className="font-medium text-slate-700">{adminUsername}</span>
-            </div>
           </div>
         </div>
       </div>
@@ -132,8 +100,7 @@ export default function AuthGate({ children }: AuthGateProps) {
           </div>
           <h1 className="text-xl font-semibold text-slate-900">Цей акаунт не має доступу</h1>
           <p className="mt-2 text-sm leading-6 text-slate-500">
-            Під цим службовим акаунтом Supabase Auth немає прив’язки до адміністратора
-            <span className="font-medium text-slate-700"> {adminUsername}</span>.
+            Поточна сесія Supabase Auth не відповідає внутрішньому адміністраторському акаунту.
           </p>
           <button
             onClick={() => void handleSignOut()}

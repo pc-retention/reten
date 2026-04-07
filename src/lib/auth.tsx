@@ -6,14 +6,11 @@ import { supabase } from './supabase';
 export const ADMIN_EMAIL_SETTING_KEY = 'auth_admin_email';
 export const ADMIN_USERNAME_SETTING_KEY = 'auth_admin_username';
 export const DEFAULT_ADMIN_EMAIL = 'admin@reten.app';
-export const DEFAULT_ADMIN_USERNAME = 'admin';
 
 type AuthContextValue = {
   adminEmail: string;
-  adminUsername: string;
   loading: boolean;
   session: Session | null;
-  refreshAdminIdentity: () => Promise<void>;
   signOut: () => Promise<void>;
 };
 
@@ -24,24 +21,10 @@ function getConfiguredAdminEmail(value: string | null | undefined) {
   return normalizedValue || DEFAULT_ADMIN_EMAIL;
 }
 
-function getConfiguredAdminUsername(value: string | null | undefined) {
-  const normalizedValue = value?.trim().toLowerCase();
-  return normalizedValue || DEFAULT_ADMIN_USERNAME;
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [adminEmail, setAdminEmail] = useState(DEFAULT_ADMIN_EMAIL);
-  const [adminUsername, setAdminUsername] = useState(DEFAULT_ADMIN_USERNAME);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
-
-  async function refreshAdminIdentity() {
-    const settingsRes = await fetchSettingsListRpc();
-    const adminEmailSetting = settingsRes.data.find((item) => item.key === ADMIN_EMAIL_SETTING_KEY);
-    const adminUsernameSetting = settingsRes.data.find((item) => item.key === ADMIN_USERNAME_SETTING_KEY);
-    setAdminEmail(getConfiguredAdminEmail(adminEmailSetting?.value));
-    setAdminUsername(getConfiguredAdminUsername(adminUsernameSetting?.value));
-  }
 
   async function signOut() {
     await supabase.auth.signOut();
@@ -61,9 +44,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       const adminEmailSetting = settingsRes.data.find((item) => item.key === ADMIN_EMAIL_SETTING_KEY);
-      const adminUsernameSetting = settingsRes.data.find((item) => item.key === ADMIN_USERNAME_SETTING_KEY);
       setAdminEmail(getConfiguredAdminEmail(adminEmailSetting?.value));
-      setAdminUsername(getConfiguredAdminUsername(adminUsernameSetting?.value));
       setSession(authData.session);
       setLoading(false);
     }
@@ -84,10 +65,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     <AuthContext.Provider
       value={{
         adminEmail,
-        adminUsername,
         loading,
         session,
-        refreshAdminIdentity,
         signOut,
       }}
     >

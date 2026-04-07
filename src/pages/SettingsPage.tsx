@@ -11,7 +11,7 @@ type SettingValues = Record<string, string>;
 type VisibilityValues = Record<string, boolean>;
 
 export default function SettingsPage() {
-  const { adminUsername, refreshAdminIdentity, signOut } = useAuth();
+  const { signOut } = useAuth();
   const [tab, setTab] = useState<'settings' | 'security' | 'templates'>('settings');
   const [settings, setSettings] = useState<Setting[]>([]);
   const [templates, setTemplates] = useState<CommunicationTemplate[]>([]);
@@ -23,8 +23,6 @@ export default function SettingsPage() {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [savingPassword, setSavingPassword] = useState(false);
-  const [loginName, setLoginName] = useState(adminUsername);
-  const [savingLoginName, setSavingLoginName] = useState(false);
 
   const hideableKeys = useMemo(
     () => hideableNavItems.map((item) => item.visibilityKey).filter((key): key is string => Boolean(key)),
@@ -35,10 +33,6 @@ export default function SettingsPage() {
     () => new Set([...hideableKeys, ADMIN_EMAIL_SETTING_KEY, ADMIN_USERNAME_SETTING_KEY]),
     [hideableKeys],
   );
-
-  useEffect(() => {
-    setLoginName(adminUsername);
-  }, [adminUsername]);
 
   useEffect(() => {
     async function load() {
@@ -149,32 +143,6 @@ export default function SettingsPage() {
     }
 
     setSavingPassword(false);
-  }
-
-  async function saveLoginName() {
-    const normalizedLoginName = loginName.trim().toLowerCase();
-
-    if (!normalizedLoginName) {
-      toast.error('Ім’я входу не може бути порожнім');
-      return;
-    }
-
-    setSavingLoginName(true);
-
-    const { error } = await supabase.rpc('upsert_public_setting', {
-      p_key: ADMIN_USERNAME_SETTING_KEY,
-      p_value: normalizedLoginName,
-      p_description: 'Ім’я адміністратора для входу в дашборд',
-    });
-
-    if (error) {
-      toast.error('Не вдалося оновити ім’я входу');
-    } else {
-      await refreshAdminIdentity();
-      toast.success('Ім’я входу оновлено');
-    }
-
-    setSavingLoginName(false);
   }
 
   async function handleSignOut() {
@@ -298,38 +266,16 @@ export default function SettingsPage() {
             <div className="border-b border-slate-100 px-6 py-5">
               <div className="flex items-center gap-2 text-lg font-semibold text-slate-900">
                 <KeyRound className="h-5 w-5 text-indigo-600" />
-                Доступ адміністратора
+                Пароль адміністратора
               </div>
               <p className="mt-1 text-sm text-slate-500">
-                Вхід у дашборд працює через просту пару <span className="font-medium text-slate-700">ім’я + пароль</span>.
+                Вхід у дашборд працює лише по паролю для внутрішнього адміністраторського акаунта.
               </p>
             </div>
 
             <div className="space-y-5 px-6 py-6">
               <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                Поточне ім’я входу: <span className="font-medium text-slate-800">{adminUsername}</span>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
-                <label className="block">
-                  <span className="mb-1.5 block text-sm font-medium text-slate-700">Ім’я входу</span>
-                  <input
-                    type="text"
-                    autoComplete="username"
-                    value={loginName}
-                    onChange={(event) => setLoginName(event.target.value)}
-                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-indigo-400 focus:bg-white"
-                    placeholder="Наприклад, admin"
-                  />
-                </label>
-                <button
-                  onClick={() => void saveLoginName()}
-                  disabled={savingLoginName}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
-                >
-                  <Save className="h-4 w-4" />
-                  Оновити ім’я
-                </button>
+                Логін більше не потрібен. Для входу використовується лише пароль.
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">
@@ -384,10 +330,9 @@ export default function SettingsPage() {
               Пам’ятай
             </div>
             <div className="mt-3 space-y-3 text-sm leading-6 text-amber-900/85">
-              <p>Ім’я входу використовується лише в UI і не показує службовий email Supabase Auth.</p>
               <p>Пароль змінюється для поточного адміністратора Supabase Auth.</p>
               <p>Після зміни використовуй новий пароль для всіх наступних входів.</p>
-              <p>Після зміни імені входу нове значення одразу стане обов’язковим на екрані логіну.</p>
+              <p>Пароль уводиться одразу на стартовому екрані, без додаткового логіну.</p>
             </div>
           </div>
         </div>

@@ -15,7 +15,7 @@ type VisibilityMap = Record<string, boolean>;
 export default function Layout({ children }: LayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [visibilityMap, setVisibilityMap] = useState<VisibilityMap>({});
-  const { adminUsername, signOut } = useAuth();
+  const { signOut } = useAuth();
 
   useEffect(() => {
     async function loadVisibility() {
@@ -117,7 +117,6 @@ export default function Layout({ children }: LayoutProps) {
         </nav>
 
         <div className="border-t border-white/10 px-4 py-4">
-          <div className="mb-3 truncate px-2 text-xs text-white/55">Логін: {adminUsername}</div>
           <button
             onClick={() => void handleSignOut()}
             className="flex w-full items-center gap-3 rounded-[18px] px-4 py-3 text-sm font-medium text-white/78 transition hover:bg-white/6 hover:text-white"
