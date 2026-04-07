@@ -1,80 +1,61 @@
 import { useState, useEffect } from 'react';
 import { ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
-import { supabase } from '../lib/supabase';
+import { fetchAnalyticsSummaryRpc, fetchCohortMatrixRpc, fetchLtvBySegmentRpc, fetchMetricsSeriesRpc, fetchRepeatPurchaseFunnelRpc, type AnalyticsSummaryRow, type FunnelRow, type LtvBySegmentRow } from '../lib/serverQueries';
 import { format, parseISO } from 'date-fns';
 import { uk } from 'date-fns/locale';
-import type { MetricsDaily, CohortSnapshot } from '../types';
-
-type ClientRow = {
-  total_orders: number;
-  is_active: boolean;
-  total_spent: number;
-  avg_order_value: number;
-  rfm_segment: string | null;
-};
+import type { CohortSnapshot, MetricsDaily } from '../types';
 
 export default function AnalyticsPage() {
   const [period, setPeriod] = useState<'7' | '14' | '30'>('30');
+  const [summary, setSummary] = useState<AnalyticsSummaryRow | null>(null);
   const [metrics, setMetrics] = useState<MetricsDaily[]>([]);
   const [cohorts, setCohorts] = useState<CohortSnapshot[]>([]);
-  const [clients, setClients] = useState<ClientRow[]>([]);
+  const [funnel, setFunnel] = useState<FunnelRow[]>([]);
+  const [ltvBySegment, setLtvBySegment] = useState<LtvBySegmentRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    async function load() {
-      const [metricsRes, cohortsRes, clientsRes] = await Promise.all([
-        supabase.from('metrics_daily').select('*').order('date', { ascending: true }),
-        supabase.from('cohort_snapshots').select('*').order('cohort_month', { ascending: true }),
-        supabase.from('clients').select('total_orders, is_active, total_spent, avg_order_value, rfm_segment'),
+    async function loadStatic() {
+      const [cohortsRes, funnelRes, ltvRes] = await Promise.all([
+        fetchCohortMatrixRpc(),
+        fetchRepeatPurchaseFunnelRpc(),
+        fetchLtvBySegmentRpc(8),
       ]);
-      setMetrics(metricsRes.data ?? []);
-      setCohorts(cohortsRes.data ?? []);
-      setClients(clientsRes.data ?? []);
-      setLoading(false);
+
+      setCohorts(cohortsRes.data);
+      setFunnel(funnelRes.data);
+      setLtvBySegment(ltvRes.data);
     }
-    load();
+
+    loadStatic();
   }, []);
 
-  const days = metrics.slice(-Number(period));
-  const prevDays = metrics.slice(-Number(period) * 2, -Number(period));
+  useEffect(() => {
+    async function loadPeriodData() {
+      setLoading(true);
+      const periodDays = Number(period);
+      const [summaryRes, metricsRes] = await Promise.all([
+        fetchAnalyticsSummaryRpc(periodDays),
+        fetchMetricsSeriesRpc(periodDays),
+      ]);
 
-  const totalRev = days.reduce((s, m) => s + m.total_revenue, 0);
-  const prevRev = prevDays.reduce((s, m) => s + m.total_revenue, 0);
-  const revChange = prevRev > 0 ? ((totalRev - prevRev) / prevRev * 100).toFixed(1) : '0';
-  const totalOrders = days.reduce((s, m) => s + m.total_orders, 0);
-  const avgAOV = totalOrders > 0 ? totalRev / totalOrders : 0;
-
-  const totalClients = clients.length;
-  const repeatClients = clients.filter(c => c.total_orders >= 2).length;
-  const retentionRate = repeatClients / Math.max(totalClients, 1) * 100;
-  const churnRate = clients.filter(c => !c.is_active).length / Math.max(totalClients, 1) * 100;
-  const avgLTV = clients.filter(c => c.total_spent > 0).reduce((s, c) => s + c.total_spent, 0) / Math.max(clients.filter(c => c.total_spent > 0).length, 1);
-
-  const t1 = clients.filter(c => c.total_orders >= 1).length;
-  const t2 = clients.filter(c => c.total_orders >= 2).length;
-  const t3 = clients.filter(c => c.total_orders >= 3).length;
-  const t4 = clients.filter(c => c.total_orders >= 4).length;
-  const funnelData = [
-    { name: '1 покупка', count: t1, pct: 100, color: '#6366f1' },
-    { name: '2 покупки', count: t2, pct: t1 ? Math.round(t2 / t1 * 100) : 0, color: '#8b5cf6' },
-    { name: '3 покупки', count: t3, pct: t1 ? Math.round(t3 / t1 * 100) : 0, color: '#a78bfa' },
-    { name: '4+ покупок', count: t4, pct: t1 ? Math.round(t4 / t1 * 100) : 0, color: '#c4b5fd' },
-  ];
-
-  const segmentLTV: Record<string, { sum: number; count: number }> = {};
-  clients.forEach(c => {
-    if (c.rfm_segment && c.total_spent > 0) {
-      if (!segmentLTV[c.rfm_segment]) segmentLTV[c.rfm_segment] = { sum: 0, count: 0 };
-      segmentLTV[c.rfm_segment].sum += c.total_spent;
-      segmentLTV[c.rfm_segment].count += 1;
+      setSummary(summaryRes.data);
+      setMetrics(metricsRes.data);
+      setLoading(false);
     }
-  });
-  const ltvBySegment = Object.entries(segmentLTV)
-    .map(([name, d]) => ({ name, ltv: Math.round(d.sum / d.count) }))
-    .sort((a, b) => b.ltv - a.ltv);
 
-  const chartData = days.map(m => ({
+    loadPeriodData();
+  }, [period]);
+
+  const totalRev = summary?.total_revenue ?? 0;
+  const revChange = summary?.revenue_change_pct ?? 0;
+  const avgAOV = summary?.avg_aov ?? 0;
+  const retentionRate = summary?.retention_rate ?? 0;
+  const churnRate = summary?.churn_rate ?? 0;
+  const avgLTV = summary?.avg_ltv ?? 0;
+
+  const chartData = metrics.map(m => ({
     date: format(parseISO(m.date), 'd MMM', { locale: uk }),
     revenue: m.total_revenue,
     orders: m.total_orders,
@@ -83,9 +64,10 @@ export default function AnalyticsPage() {
 
   const cohortMonths = [...new Set(cohorts.map(c => c.cohort_month))].sort();
   const maxMonthsSince = cohorts.length > 0 ? Math.max(...cohorts.map(c => c.months_since_first)) : 0;
+  const cohortMap = new Map(cohorts.map(c => [`${c.cohort_month}:${c.months_since_first}`, c]));
 
   function getRetention(cohort: string, monthsSince: number): number | null {
-    const snap = cohorts.find(c => c.cohort_month === cohort && c.months_since_first === monthsSince);
+    const snap = cohortMap.get(`${cohort}:${monthsSince}`);
     return snap ? snap.retention_rate : null;
   }
 
@@ -115,11 +97,11 @@ export default function AnalyticsPage() {
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {[
-          { label: 'Сер. LTV', value: `${Math.round(avgLTV).toLocaleString()} грн`, change: '+12%', up: true },
-          { label: 'Сер. чек', value: `${Math.round(avgAOV)} грн`, change: '+5.2%', up: true },
-          { label: 'Утримання', value: `${retentionRate.toFixed(1)}%`, change: '+2.1%', up: true },
-          { label: 'Відтік', value: `${churnRate.toFixed(1)}%`, change: '-1.5%', up: false },
-          { label: `Виручка (${period}д)`, value: `${Math.round(totalRev).toLocaleString()} грн`, change: `${Number(revChange) > 0 ? '+' : ''}${revChange}%`, up: Number(revChange) > 0 },
+          { label: 'Сер. LTV', value: `${Math.round(avgLTV).toLocaleString()} грн`, change: '0%', up: true },
+          { label: 'Сер. чек', value: `${Math.round(avgAOV)} грн`, change: '0%', up: true },
+          { label: 'Утримання', value: `${retentionRate.toFixed(1)}%`, change: '0%', up: true },
+          { label: 'Відтік', value: `${churnRate.toFixed(1)}%`, change: '0%', up: false },
+          { label: `Виручка (${period}д)`, value: `${Math.round(totalRev).toLocaleString()} грн`, change: `${revChange > 0 ? '+' : ''}${revChange.toFixed(1)}%`, up: revChange >= 0 },
         ].map((m, i) => (
           <div key={i} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
             <p className="text-sm text-gray-500">{m.label}</p>
@@ -148,10 +130,10 @@ export default function AnalyticsPage() {
         <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">LTV за сегментами</h2>
           <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={ltvBySegment.slice(0, 8)} layout="vertical">
+            <BarChart data={ltvBySegment} layout="vertical">
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis type="number" tick={{ fontSize: 11 }} stroke="#94a3b8" />
-              <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={100} stroke="#94a3b8" />
+              <YAxis type="category" dataKey="segment_name" tick={{ fontSize: 10 }} width={100} stroke="#94a3b8" />
               <Tooltip formatter={(v) => [`${(v as number).toLocaleString()} грн`, 'LTV']} />
               <Bar dataKey="ltv" fill="#6366f1" radius={[0, 4, 4, 0]} />
             </BarChart>
@@ -162,14 +144,14 @@ export default function AnalyticsPage() {
       <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Воронка повторних покупок</h2>
         <div className="grid grid-cols-4 gap-4">
-          {funnelData.map((f, i) => (
-            <div key={i} className="text-center">
+          {funnel.map((f) => (
+            <div key={f.step_order} className="text-center">
               <div className="relative mx-auto mb-3" style={{ width: `${60 + f.pct * 0.4}%` }}>
-                <div className="h-16 rounded-lg flex items-center justify-center" style={{ backgroundColor: f.color }}>
-                  <span className="text-white font-bold text-lg">{f.count}</span>
+                <div className="h-16 rounded-lg flex items-center justify-center" style={{ backgroundColor: ['#6366f1', '#8b5cf6', '#a78bfa', '#c4b5fd'][f.step_order - 1] || '#6366f1' }}>
+                  <span className="text-white font-bold text-lg">{f.client_count}</span>
                 </div>
               </div>
-              <p className="text-sm font-medium text-gray-700">{f.name}</p>
+              <p className="text-sm font-medium text-gray-700">{f.step_name}</p>
               <p className="text-xs text-gray-500">{f.pct}%</p>
             </div>
           ))}
@@ -191,7 +173,7 @@ export default function AnalyticsPage() {
             </thead>
             <tbody>
               {cohortMonths.map(cohort => {
-                const size = cohorts.find(c => c.cohort_month === cohort && c.months_since_first === 0)?.cohort_size || 0;
+                const size = cohortMap.get(`${cohort}:0`)?.cohort_size || 0;
                 return (
                   <tr key={cohort}>
                     <td className="px-2 py-1.5 font-medium text-gray-700">{format(parseISO(cohort), 'MMM yyyy', { locale: uk })}</td>

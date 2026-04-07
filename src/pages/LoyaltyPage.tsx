@@ -1,54 +1,175 @@
-import { useState, useEffect } from 'react';
-import { Gem, TrendingUp, Settings2 } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Gem, TrendingUp, Settings2, Edit2, X, ChevronLeft, ChevronRight, Wand2 } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
-import { supabase } from '../lib/supabase';
 import { format, parseISO } from 'date-fns';
-import type { LoyaltyTier, LoyaltyTransaction } from '../types';
+import type { LoyaltyTier } from '../types';
+import {
+  fetchLoyaltyOverviewRpc,
+  fetchLoyaltyTiersListRpc,
+  refreshClientsDenormalizedRpc,
+  fetchLoyaltyTopClientsRpc,
+  fetchLoyaltyTransactionsPageRpc,
+  seedDefaultLoyaltyTiersRpc,
+  upsertLoyaltyTierRpc,
+  type LoyaltyTopClientRow,
+  type LoyaltyTransactionRow,
+} from '../lib/serverQueries';
 
-type ClientLoyalty = {
-  client_id: number;
-  full_name: string;
-  loyalty_tier: string;
-  loyalty_points: number;
-};
-
-type TransactionRow = LoyaltyTransaction & {
-  clients: { full_name: string } | null;
-};
+const TRANSACTIONS_PAGE_SIZE = 50;
 
 const tierColors: Record<string, string> = {
   bronze: '#d97706', silver: '#6b7280', gold: '#eab308', platinum: '#7c3aed',
 };
 
+type LoyaltyOverview = {
+  totalClients: number;
+  totalPoints: number;
+  avgPoints: number;
+  participationRate: number;
+  transactionsCount: number;
+  bronzeCount: number;
+  silverCount: number;
+  goldCount: number;
+  platinumCount: number;
+};
+
+const emptyOverview: LoyaltyOverview = {
+  totalClients: 0,
+  totalPoints: 0,
+  avgPoints: 0,
+  participationRate: 0,
+  transactionsCount: 0,
+  bronzeCount: 0,
+  silverCount: 0,
+  goldCount: 0,
+  platinumCount: 0,
+};
+
 export default function LoyaltyPage() {
   const [tab, setTab] = useState<'overview' | 'transactions' | 'config'>('overview');
-  const [clients, setClients] = useState<ClientLoyalty[]>([]);
+  const [overview, setOverview] = useState<LoyaltyOverview>(emptyOverview);
+  const [topClients, setTopClients] = useState<LoyaltyTopClientRow[]>([]);
   const [tiers, setTiers] = useState<LoyaltyTier[]>([]);
-  const [transactions, setTransactions] = useState<TransactionRow[]>([]);
+  const [transactions, setTransactions] = useState<LoyaltyTransactionRow[]>([]);
+  const [transactionsTotal, setTransactionsTotal] = useState(0);
+  const [transactionsPage, setTransactionsPage] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [editingTier, setEditingTier] = useState<LoyaltyTier | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [seeding, setSeeding] = useState(false);
+
+  const loadOverview = useCallback(async () => {
+    const [overviewRes, topClientsRes, tiersRes] = await Promise.all([
+      fetchLoyaltyOverviewRpc(),
+      fetchLoyaltyTopClientsRpc(10),
+      fetchLoyaltyTiersListRpc(),
+    ]);
+
+    if (!overviewRes.error && overviewRes.data) {
+      setOverview({
+        totalClients: overviewRes.data.total_clients ?? 0,
+        totalPoints: overviewRes.data.total_points ?? 0,
+        avgPoints: overviewRes.data.avg_points ?? 0,
+        participationRate: overviewRes.data.participation_rate ?? 0,
+        transactionsCount: overviewRes.data.transactions_count ?? 0,
+        bronzeCount: overviewRes.data.bronze_count ?? 0,
+        silverCount: overviewRes.data.silver_count ?? 0,
+        goldCount: overviewRes.data.gold_count ?? 0,
+        platinumCount: overviewRes.data.platinum_count ?? 0,
+      });
+    }
+
+    if (!topClientsRes.error) {
+      setTopClients(topClientsRes.data);
+    }
+
+    if (!tiersRes.error) {
+      setTiers(tiersRes.data);
+    }
+  }, []);
+
+  const loadTransactions = useCallback(async () => {
+    const result = await fetchLoyaltyTransactionsPageRpc(transactionsPage, TRANSACTIONS_PAGE_SIZE);
+    if (!result.error) {
+      setTransactions(result.data);
+      setTransactionsTotal(result.data[0]?.total_count ?? 0);
+    }
+  }, [transactionsPage]);
 
   useEffect(() => {
     async function load() {
-      const [clientsRes, tiersRes, txRes] = await Promise.all([
-        supabase.from('clients').select('client_id, full_name, loyalty_tier, loyalty_points').order('loyalty_points', { ascending: false }),
-        supabase.from('loyalty_tiers').select('*').order('min_total_spent', { ascending: true }),
-        supabase.from('loyalty_transactions').select('*, clients(full_name)').order('created_at', { ascending: false }),
-      ]);
-      setClients(clientsRes.data ?? []);
-      setTiers(tiersRes.data ?? []);
-      setTransactions((txRes.data ?? []) as TransactionRow[]);
+      setLoading(true);
+      await Promise.all([loadOverview(), loadTransactions()]);
       setLoading(false);
     }
-    load();
-  }, []);
+    void load();
+  }, [loadOverview, loadTransactions]);
 
-  const tierCounts: Record<string, number> = { bronze: 0, silver: 0, gold: 0, platinum: 0 };
-  clients.forEach(c => { tierCounts[c.loyalty_tier] = (tierCounts[c.loyalty_tier] || 0) + 1; });
+  useEffect(() => {
+    if (tab === 'transactions') {
+      void loadTransactions();
+    }
+  }, [tab, loadTransactions]);
+
+  async function saveTier(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingTier) return;
+    setSaving(true);
+
+    const { error } = await upsertLoyaltyTierRpc({
+      tierName: editingTier.tier_name,
+      minTotalSpent: editingTier.min_total_spent,
+      minOrders: editingTier.min_orders,
+      cashbackPercent: editingTier.cashback_percent,
+      bonusMultiplier: editingTier.bonus_multiplier,
+      perks: editingTier.perks,
+      sortOrder: editingTier.sort_order,
+    });
+
+    if (error) {
+      toast.error('Помилка збереження');
+    } else {
+      const refreshResult = await refreshClientsDenormalizedRpc();
+      if (refreshResult.error) {
+        toast.error('Рівень збережено, але не вдалося перерахувати клієнтів');
+        setSaving(false);
+        return;
+      }
+      await loadOverview();
+      toast.success('Налаштування рівня оновлено');
+      setEditingTier(null);
+    }
+    setSaving(false);
+  }
+
+  async function seedDefaults() {
+    setSeeding(true);
+    const { error } = await seedDefaultLoyaltyTiersRpc();
+    if (error) {
+      toast.error('Не вдалося створити стандартні рівні');
+    } else {
+      const refreshResult = await refreshClientsDenormalizedRpc();
+      if (refreshResult.error) {
+        toast.error('Рівні створено, але не вдалося перерахувати клієнтів');
+        setSeeding(false);
+        return;
+      }
+      await loadOverview();
+      toast.success('Стандартні рівні створено');
+    }
+    setSeeding(false);
+  }
+
+  const tierCounts: Record<string, number> = {
+    bronze: overview.bronzeCount,
+    silver: overview.silverCount,
+    gold: overview.goldCount,
+    platinum: overview.platinumCount,
+  };
 
   const pieData = Object.entries(tierCounts).map(([name, value]) => ({ name, value, color: tierColors[name] }));
-  const totalPoints = clients.reduce((s, c) => s + c.loyalty_points, 0);
-  const avgPoints = Math.round(totalPoints / Math.max(clients.length, 1));
-  const participationRate = (clients.filter(c => c.loyalty_points > 0).length / Math.max(clients.length, 1) * 100).toFixed(1);
+  const transactionsTotalPages = Math.ceil(transactionsTotal / TRANSACTIONS_PAGE_SIZE);
 
   if (loading) return <div className="text-center py-20 text-gray-400">Завантаження...</div>;
 
@@ -62,7 +183,7 @@ export default function LoyaltyPage() {
           { key: 'transactions', label: 'Транзакції', icon: TrendingUp },
           { key: 'config', label: 'Рівні', icon: Settings2 },
         ].map(t => (
-          <button key={t.key} onClick={() => setTab(t.key as any)}
+          <button key={t.key} onClick={() => setTab(t.key as 'overview' | 'transactions' | 'config')}
             className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-md transition ${
               tab === t.key ? 'bg-white shadow text-gray-900' : 'text-gray-500'
             }`}>
@@ -71,24 +192,43 @@ export default function LoyaltyPage() {
         ))}
       </div>
 
+      {tab === 'config' && tiers.length === 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 p-8 shadow-sm text-center space-y-4">
+          <div>
+            <p className="text-gray-700 font-medium">У базі ще немає рівнів лояльності.</p>
+            <p className="text-sm text-gray-400 mt-1">Створи стандартні рівні й потім редагуй їх під себе.</p>
+          </div>
+          <div className="flex justify-center">
+            <button
+              onClick={() => void seedDefaults()}
+              disabled={seeding}
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition disabled:opacity-50"
+            >
+              <Wand2 className="w-4 h-4" />
+              Заповнити стандартно
+            </button>
+          </div>
+        </div>
+      )}
+
       {tab === 'overview' && (
         <>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
               <p className="text-sm text-gray-500">Всього балів в обігу</p>
-              <p className="text-2xl font-bold text-gray-900">{totalPoints.toLocaleString()}</p>
+              <p className="text-2xl font-bold text-gray-900">{overview.totalPoints.toLocaleString()}</p>
             </div>
             <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
               <p className="text-sm text-gray-500">Середній баланс</p>
-              <p className="text-2xl font-bold text-gray-900">{avgPoints}</p>
+              <p className="text-2xl font-bold text-gray-900">{overview.avgPoints}</p>
             </div>
             <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
               <p className="text-sm text-gray-500">Участь в програмі</p>
-              <p className="text-2xl font-bold text-gray-900">{participationRate}%</p>
+              <p className="text-2xl font-bold text-gray-900">{overview.participationRate}%</p>
             </div>
             <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
               <p className="text-sm text-gray-500">Транзакцій</p>
-              <p className="text-2xl font-bold text-gray-900">{transactions.length}</p>
+              <p className="text-2xl font-bold text-gray-900">{overview.transactionsCount}</p>
             </div>
           </div>
 
@@ -109,7 +249,7 @@ export default function LoyaltyPage() {
             <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Топ-10 по балах</h2>
               <div className="space-y-2">
-                {clients.slice(0, 10).map((c, i) => (
+                {topClients.map((c, i) => (
                   <div key={c.client_id} className="flex items-center gap-3 py-2 border-b border-gray-50">
                     <span className="text-xs text-gray-400 w-5">{i + 1}.</span>
                     <div className="flex-1">
@@ -146,7 +286,7 @@ export default function LoyaltyPage() {
               {transactions.map(t => (
                 <tr key={t.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 text-gray-500">{format(parseISO(t.created_at), 'dd.MM.yyyy')}</td>
-                  <td className="px-4 py-3 font-medium text-gray-900">{t.clients?.full_name || '-'}</td>
+                  <td className="px-4 py-3 font-medium text-gray-900">{t.client_name || '-'}</td>
                   <td className="px-4 py-3">
                     <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
                       t.transaction_type === 'earn' ? 'bg-green-100 text-green-700' :
@@ -161,18 +301,45 @@ export default function LoyaltyPage() {
                   </td>
                 </tr>
               ))}
+              {transactions.length === 0 && (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-400">Немає транзакцій</td></tr>
+              )}
             </tbody>
           </table>
+          {transactionsTotalPages > 1 && (
+            <div className="px-4 py-3 border-t border-gray-200 flex items-center justify-between bg-gray-50">
+              <button
+                onClick={() => setTransactionsPage(p => Math.max(0, p - 1))}
+                disabled={transactionsPage === 0}
+                className="flex items-center gap-1 px-3 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <ChevronLeft className="w-4 h-4" /> Попередня
+              </button>
+              <span className="text-sm text-gray-600 font-medium">{transactionsPage + 1} / {transactionsTotalPages}</span>
+              <button
+                onClick={() => setTransactionsPage(p => Math.min(transactionsTotalPages - 1, p + 1))}
+                disabled={transactionsPage >= transactionsTotalPages - 1}
+                className="flex items-center gap-1 px-3 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Наступна <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
         </div>
       )}
 
-      {tab === 'config' && (
+      {tab === 'config' && tiers.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {tiers.map(tier => (
             <div key={tier.tier_name} className="bg-white rounded-xl border-2 shadow-sm p-6" style={{ borderColor: tierColors[tier.tier_name] }}>
-              <div className="flex items-center gap-2 mb-4">
-                <Gem className="w-5 h-5" style={{ color: tierColors[tier.tier_name] }} />
-                <h3 className="text-lg font-bold text-gray-900 capitalize">{tier.tier_name}</h3>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <Gem className="w-5 h-5" style={{ color: tierColors[tier.tier_name] }} />
+                  <h3 className="text-lg font-bold text-gray-900 capitalize">{tier.tier_name}</h3>
+                </div>
+                <button onClick={() => setEditingTier(tier)} className="p-1.5 hover:bg-gray-100 rounded-md text-gray-400 hover:text-gray-600 transition">
+                  <Edit2 className="w-4 h-4" />
+                </button>
               </div>
               <div className="space-y-3 text-sm">
                 <div className="flex justify-between">
@@ -200,6 +367,50 @@ export default function LoyaltyPage() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {editingTier && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-md overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+              <div className="flex items-center gap-2">
+                <Gem className="w-5 h-5" style={{ color: tierColors[editingTier.tier_name] }} />
+                <h3 className="font-semibold text-gray-900 capitalize">Налаштування: {editingTier.tier_name}</h3>
+              </div>
+              <button type="button" onClick={() => setEditingTier(null)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={saveTier} className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Мін. сума витрат (грн)</label>
+                  <input required type="number" min="0" value={editingTier.min_total_spent} onChange={e => setEditingTier({ ...editingTier, min_total_spent: parseFloat(e.target.value) || 0 })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Мін. к-сть замовлень</label>
+                  <input required type="number" min="0" value={editingTier.min_orders} onChange={e => setEditingTier({ ...editingTier, min_orders: parseInt(e.target.value) || 0 })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Кешбек (%)</label>
+                  <input required type="number" min="0" max="100" value={editingTier.cashback_percent} onChange={e => setEditingTier({ ...editingTier, cashback_percent: parseInt(e.target.value) || 0 })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Множник балів</label>
+                  <input required type="number" min="1" step="0.1" value={editingTier.bonus_multiplier} onChange={e => setEditingTier({ ...editingTier, bonus_multiplier: parseFloat(e.target.value) || 1 })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Опис переваг рівня</label>
+                <textarea rows={2} value={editingTier.perks || ''} onChange={e => setEditingTier({ ...editingTier, perks: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Напр. Безкоштовна доставка..." />
+              </div>
+              <div className="pt-4 flex justify-end gap-3">
+                <button type="button" onClick={() => setEditingTier(null)} className="px-4 py-2 text-gray-700 font-medium hover:bg-gray-100 rounded-lg transition">Скасувати</button>
+                <button type="submit" disabled={saving} className="px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition disabled:opacity-50">{saving ? 'Збереження...' : 'Зберегти'}</button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

@@ -30,8 +30,12 @@ export interface Product {
   name: string;
   usage_days: number;
   category: string | null;
+  brand?: string | null;
+  brand_color?: string | null;
   price: number;
   cross_sell_barcodes: string[];
+  is_active?: boolean;
+  image_url?: string;
   created_at: string;
   updated_at: string;
 }
@@ -49,11 +53,22 @@ export interface ClientOrder {
   client_id: number;
   order_id: number;
   order_date: string;
+  order_created_at?: string | null;
+  status_changed_at?: string | null;
   status_id: number;
   source_id: number;
   total_amount: number;
   products_count: number;
   created_at: string;
+}
+
+export interface OrderListItem extends ClientOrder {
+  status_name: string;
+  status_color?: string | null;
+  source_name: string;
+  source_color?: string | null;
+  client_name: string | null;
+  total_count: number;
 }
 
 export interface ClientOrderItem {
@@ -192,7 +207,17 @@ export interface MetricsDaily {
 export interface AllowedSource {
   source_id: number;
   source_name: string;
+  color?: string | null;
   is_active: boolean;
+}
+
+export interface AllowedOrderStatus {
+  status_id: number;
+  status_name: string;
+  group_name: string | null;
+  color?: string | null;
+  is_active: boolean;
+  created_at: string;
 }
 
 export interface SyncLog {
@@ -229,6 +254,7 @@ export interface Campaign {
   clicked_count: number;
   conversion_count: number;
   created_at: string;
+  updated_at: string;
 }
 
 export interface BadgeCounts {

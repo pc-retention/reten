@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Bell, Clock, CheckCircle, Send, AlertTriangle } from 'lucide-react';
+import { Bell, Clock, CheckCircle, Send, AlertTriangle, Trash2 } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
-import { format, parseISO, isToday, isBefore, startOfDay } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import type { ClientPurchase } from '../types';
+import { getDefaultReminderDateRange, getReminderStatus, getTodayDateKey } from '../lib/reminders';
+import { fetchFilteredRemindersRpc } from '../lib/serverQueries';
 
 type ReminderRow = ClientPurchase & {
   clients: { full_name: string; phone: string | null } | null;
@@ -10,26 +13,51 @@ type ReminderRow = ClientPurchase & {
 
 export default function RemindersPage() {
   const [tab, setTab] = useState<'today' | 'overdue' | 'sent' | 'all'>('today');
+  const defaultDateRange = getDefaultReminderDateRange();
+  const [dateFrom, setDateFrom] = useState(defaultDateRange.dateFrom);
+  const [dateTo, setDateTo] = useState(defaultDateRange.dateTo);
   const [allReminders, setAllReminders] = useState<ReminderRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
-      const { data } = await supabase
-        .from('client_purchases')
-        .select('*, clients(full_name, phone)')
-        .order('reminder_date', { ascending: true });
-      setAllReminders((data ?? []) as ReminderRow[]);
+      setLoading(true);
+
+      const rpcResult = await fetchFilteredRemindersRpc(dateFrom, dateTo);
+      if (rpcResult.error) {
+        setAllReminders([]);
+        setLoading(false);
+        return;
+      }
+
+      setAllReminders(rpcResult.data.map(reminder => ({
+        ...reminder,
+        clients: {
+          full_name: reminder.client_name,
+          phone: reminder.client_phone,
+        },
+      })) as ReminderRow[]);
       setLoading(false);
     }
     load();
-  }, []);
+  }, [dateFrom, dateTo]);
 
-  const today = startOfDay(new Date());
+  async function deleteReminder(id: string) {
+    if (!confirm('Видалити це нагадування?')) return;
+    const { error } = await supabase.from('client_purchases').delete().eq('id', id);
+    if (error) {
+      toast.error('Помилка видалення');
+    } else {
+      toast.success('Нагадування видалено');
+      setAllReminders(prev => prev.filter(r => r.id !== id));
+    }
+  }
 
-  const todayReminders = allReminders.filter(r => isToday(parseISO(r.reminder_date)) && !r.reminder_sent);
-  const overdueReminders = allReminders.filter(r => isBefore(parseISO(r.reminder_date), today) && !r.reminder_sent);
-  const sentReminders = allReminders.filter(r => r.reminder_sent);
+  const todayDateKey = getTodayDateKey();
+
+  const todayReminders = allReminders.filter(r => getReminderStatus(r, todayDateKey) === 'today');
+  const overdueReminders = allReminders.filter(r => getReminderStatus(r, todayDateKey) === 'overdue');
+  const sentReminders = allReminders.filter(r => getReminderStatus(r, todayDateKey) === 'sent');
 
   const displayReminders = tab === 'today' ? todayReminders
     : tab === 'overdue' ? overdueReminders
@@ -47,7 +75,8 @@ export default function RemindersPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-gray-900">Нагадування</h1>
 
-      <div className="flex gap-1 bg-gray-100 p-1 rounded-lg w-fit">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex gap-1 bg-gray-100 p-1 rounded-lg w-fit">
         {[
           { key: 'today', label: 'Сьогодні', icon: Bell, color: 'text-blue-600' },
           { key: 'overdue', label: 'Прострочені', icon: AlertTriangle, color: 'text-red-600' },
@@ -69,6 +98,15 @@ export default function RemindersPage() {
             )}
           </button>
         ))}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+            className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white text-gray-700 w-[130px]" title="Від (Дата нагадування)" />
+          <span className="text-gray-400">-</span>
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+            className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white text-gray-700 w-[130px]" title="До (Дата нагадування)" />
+        </div>
       </div>
 
       {loading ? (
@@ -92,7 +130,7 @@ export default function RemindersPage() {
                 <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">Немає нагадувань</td></tr>
               )}
               {displayReminders.map(r => {
-                const isOverdue = isBefore(parseISO(r.reminder_date), today) && !r.reminder_sent;
+                const isOverdue = getReminderStatus(r, todayDateKey) === 'overdue';
                 return (
                   <tr key={r.id} className={`hover:bg-gray-50 ${isOverdue ? 'bg-red-50/50' : ''}`}>
                     <td className="px-4 py-3">
@@ -120,11 +158,18 @@ export default function RemindersPage() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      {!r.reminder_sent && (
-                        <button className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-md hover:bg-indigo-700 ml-auto">
-                          <Send className="w-3.5 h-3.5" /> Надіслати
-                        </button>
-                      )}
+                      <div className="flex items-center justify-end gap-2">
+                        {isOverdue && (
+                          <button onClick={() => deleteReminder(r.id)} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-md transition" title="Видалити">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                        {!r.reminder_sent && (
+                          <button className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-md hover:bg-indigo-700">
+                            <Send className="w-3.5 h-3.5" /> Надіслати
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );

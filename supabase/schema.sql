@@ -16,8 +16,10 @@ CREATE TABLE IF NOT EXISTS products (
   name TEXT NOT NULL,
   usage_days INTEGER NOT NULL DEFAULT 30,
   category TEXT,
+  brand TEXT,
   price NUMERIC(10,2) DEFAULT 0,
   cross_sell_barcodes TEXT[] DEFAULT '{}',
+  is_active BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -69,6 +71,8 @@ CREATE TABLE IF NOT EXISTS client_orders (
   client_id BIGINT REFERENCES clients(client_id),
   order_id BIGINT UNIQUE NOT NULL,
   order_date DATE,
+  order_created_at TIMESTAMPTZ,
+  status_changed_at TIMESTAMPTZ,
   status_id INTEGER,
   source_id INTEGER,
   total_amount NUMERIC(10,2) DEFAULT 0,
@@ -257,7 +261,18 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 CREATE TABLE IF NOT EXISTS allowed_sources (
   source_id INTEGER PRIMARY KEY,
   source_name TEXT NOT NULL,
+  color TEXT,
   is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- H1.5. Дозволені статуси замовлень
+CREATE TABLE IF NOT EXISTS allowed_order_statuses (
+  status_id INTEGER PRIMARY KEY,
+  status_name TEXT NOT NULL,
+  group_name TEXT,
+  color TEXT,
+  is_active BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -386,7 +401,14 @@ DECLARE
   v_total_days INTEGER;
   v_end_date DATE;
   v_reminder DATE;
+  v_is_active BOOLEAN;
 BEGIN
+  -- Перевірка чи товар активний
+  SELECT is_active INTO v_is_active FROM products WHERE barcode = p_barcode LIMIT 1;
+  IF v_is_active IS FALSE THEN
+    RETURN; -- Товар вимкнено, пропускаємо додавання до "Нагадувань"
+  END IF;
+
   v_total_days := p_quantity * p_usage_days;
   v_end_date := p_purchase_date + v_total_days;
   v_reminder := v_end_date - 3; -- нагадування за 3 дні до закінчення
@@ -512,10 +534,12 @@ DECLARE
   v_new_tier TEXT;
 BEGIN
   SELECT
-    COUNT(*), COALESCE(SUM(total_amount), 0), COALESCE(AVG(total_amount), 0),
-    MIN(order_date), MAX(order_date)
+    COUNT(co.*), COALESCE(SUM(co.total_amount), 0), COALESCE(AVG(co.total_amount), 0),
+    MIN(co.order_date), MAX(co.order_date)
   INTO v_total_orders, v_total_spent, v_avg_order, v_first_date, v_last_date
-  FROM client_orders WHERE client_id = p_client_id;
+  FROM client_orders co
+  JOIN allowed_order_statuses aos ON co.status_id = aos.status_id
+  WHERE co.client_id = p_client_id AND aos.is_active = TRUE;
 
   v_days_since := CURRENT_DATE - v_last_date;
 
@@ -750,7 +774,19 @@ INSERT INTO settings (key, value, description) VALUES
   ('win_back_cold_days', '60', 'Днів без покупки для cold win-back'),
   ('win_back_lost_days', '120', 'Днів без покупки для lost'),
   ('loyalty_points_per_uah', '1', 'Балів за 1 грн покупки'),
-  ('rfm_update_frequency', 'weekly', 'Як часто перераховувати RFM')
+  ('rfm_update_frequency', 'weekly', 'Як часто перераховувати RFM'),
+  ('sidebar_show_orders', 'true', 'Показувати вкладку "Замовлення" у sidebar'),
+  ('sidebar_show_products', 'true', 'Показувати вкладку "Товари" у sidebar'),
+  ('sidebar_show_clients', 'true', 'Показувати вкладку "Клієнти" у sidebar'),
+  ('sidebar_show_sources', 'true', 'Показувати вкладку "Джерела" у sidebar'),
+  ('sidebar_show_statuses', 'true', 'Показувати вкладку "Статуси" у sidebar'),
+  ('sidebar_show_reminders', 'true', 'Показувати вкладку "Нагадування" у sidebar'),
+  ('sidebar_show_automations', 'true', 'Показувати вкладку "Автоматизації" у sidebar'),
+  ('sidebar_show_campaigns', 'true', 'Показувати вкладку "Кампанії" у sidebar'),
+  ('sidebar_show_analytics', 'true', 'Показувати вкладку "Аналітика" у sidebar'),
+  ('sidebar_show_segments', 'true', 'Показувати вкладку "Сегменти" у sidebar'),
+  ('sidebar_show_loyalty', 'true', 'Показувати вкладку "Лояльність" у sidebar'),
+  ('sidebar_show_sync', 'true', 'Показувати вкладку "Синхронізація" у sidebar')
 ON CONFLICT (key) DO NOTHING;
 
 -- Рівні лояльності
