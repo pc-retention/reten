@@ -1,6 +1,8 @@
 import { Suspense, lazy } from 'react';
 import { Routes, Route } from 'react-router-dom';
+import AuthGate from './components/AuthGate';
 import Layout from './components/Layout';
+import { AuthProvider } from './lib/auth';
 
 const OverviewPage = lazy(() => import('./pages/OverviewPage'));
 const ClientsPage = lazy(() => import('./pages/ClientsPage'));
@@ -19,33 +21,37 @@ const StatusesPage = lazy(() => import('./pages/StatusesPage'));
 
 function App() {
   return (
-    <Layout>
-      <Suspense
-        fallback={
-          <div className="flex items-center justify-center h-64">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600" />
-          </div>
-        }
-      >
-        <Routes>
-          <Route path="/" element={<OverviewPage />} />
-          <Route path="/clients" element={<ClientsPage />} />
-          <Route path="/clients/:id" element={<ClientsPage />} />
-          <Route path="/products" element={<ProductsPage />} />
-          <Route path="/analytics" element={<AnalyticsPage />} />
-          <Route path="/segments" element={<SegmentsPage />} />
-          <Route path="/automations" element={<AutomationsPage />} />
-          <Route path="/reminders" element={<RemindersPage />} />
-          <Route path="/loyalty" element={<LoyaltyPage />} />
-          <Route path="/campaigns" element={<CampaignsPage />} />
-          <Route path="/sources" element={<SourcesPage />} />
-          <Route path="/orders" element={<OrdersPage />} />
-          <Route path="/sync" element={<SyncPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/statuses" element={<StatusesPage />} />
-        </Routes>
-      </Suspense>
-    </Layout>
+    <AuthProvider>
+      <AuthGate>
+        <Layout>
+          <Suspense
+            fallback={
+              <div className="flex items-center justify-center h-64">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600" />
+              </div>
+            }
+          >
+            <Routes>
+              <Route path="/" element={<OverviewPage />} />
+              <Route path="/clients" element={<ClientsPage />} />
+              <Route path="/clients/:id" element={<ClientsPage />} />
+              <Route path="/products" element={<ProductsPage />} />
+              <Route path="/analytics" element={<AnalyticsPage />} />
+              <Route path="/segments" element={<SegmentsPage />} />
+              <Route path="/automations" element={<AutomationsPage />} />
+              <Route path="/reminders" element={<RemindersPage />} />
+              <Route path="/loyalty" element={<LoyaltyPage />} />
+              <Route path="/campaigns" element={<CampaignsPage />} />
+              <Route path="/sources" element={<SourcesPage />} />
+              <Route path="/orders" element={<OrdersPage />} />
+              <Route path="/sync" element={<SyncPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/statuses" element={<StatusesPage />} />
+            </Routes>
+          </Suspense>
+        </Layout>
+      </AuthGate>
+    </AuthProvider>
   );
 }
 

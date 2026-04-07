@@ -34,6 +34,8 @@ RETURNS TABLE (
   total_count BIGINT
 )
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
 AS $$
 DECLARE
   v_offset INTEGER := GREATEST(p_page, 0) * GREATEST(p_page_size, 1);
@@ -103,13 +105,15 @@ RETURNS TABLE (
 )
 LANGUAGE sql
 STABLE
+SECURITY DEFINER
+SET search_path = public
 AS $$
   SELECT
     (SELECT COUNT(*) FROM products WHERE is_active = TRUE) AS active_count,
     (SELECT COUNT(*) FROM products WHERE is_active = FALSE) AS inactive_count,
     (SELECT COUNT(*) FROM unknown_barcodes) AS unknown_count,
-    (SELECT COUNT(DISTINCT category) FROM products WHERE category IS NOT NULL) AS categories_count,
-    (SELECT COUNT(DISTINCT brand) FROM products WHERE brand IS NOT NULL) AS brands_count;
+    (SELECT COUNT(*) FROM product_categories) AS categories_count,
+    (SELECT COUNT(*) FROM product_brands) AS brands_count;
 $$;
 
 CREATE OR REPLACE FUNCTION get_product_categories_summary()
@@ -119,12 +123,17 @@ RETURNS TABLE (
 )
 LANGUAGE sql
 STABLE
+SECURITY DEFINER
+SET search_path = public
 AS $$
-  SELECT category, COUNT(*) AS product_count
-  FROM products
-  WHERE category IS NOT NULL
-  GROUP BY category
-  ORDER BY product_count DESC, category ASC;
+  SELECT
+    pc.category_name AS category,
+    COUNT(p.barcode) AS product_count
+  FROM product_categories pc
+  LEFT JOIN products p
+    ON p.category = pc.category_name
+  GROUP BY pc.category_name
+  ORDER BY product_count DESC, pc.category_name ASC;
 $$;
 
 CREATE OR REPLACE FUNCTION get_unknown_barcodes_page(
@@ -142,6 +151,8 @@ RETURNS TABLE (
 )
 LANGUAGE sql
 STABLE
+SECURITY DEFINER
+SET search_path = public
 AS $$
   WITH filtered AS (
     SELECT ub.*

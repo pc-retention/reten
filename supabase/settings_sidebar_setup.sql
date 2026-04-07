@@ -30,6 +30,8 @@ $$;
 GRANT EXECUTE ON FUNCTION upsert_public_setting(TEXT, TEXT, TEXT) TO anon, authenticated;
 
 INSERT INTO settings (key, value, description) VALUES
+  ('auth_admin_email', 'admin@reten.app', 'Email адміністратора для входу в дашборд'),
+  ('auth_admin_username', 'admin', 'Ім’я адміністратора для входу в дашборд'),
   ('sidebar_show_orders', 'true', 'Показувати вкладку "Замовлення" у sidebar'),
   ('sidebar_show_products', 'true', 'Показувати вкладку "Товари" у sidebar'),
   ('sidebar_show_clients', 'true', 'Показувати вкладку "Клієнти" у sidebar'),

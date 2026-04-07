@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import { RefreshCw, MessageSquare, ShoppingCart, ArrowLeftRight, Gift, Clock, CheckCircle, XCircle, SkipForward } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { fetchAutomationQueueRpc, fetchCommunicationLogAllRpc, fetchCommunicationTemplatesListRpc, fetchWinBackCandidatesRpc, type AutomationQueueRpcRow } from '../lib/serverQueries';
 import { format, parseISO } from 'date-fns';
-import type { AutomationQueueItem, CommunicationLog, CommunicationTemplate, WinBackCandidate } from '../types';
+import type { CommunicationLog, CommunicationTemplate, WinBackCandidate } from '../types';
 
-type QueueRow = AutomationQueueItem & { clients: { full_name: string } | null };
+type QueueRow = AutomationQueueRpcRow;
 
 const tabs = [
   { key: 'replenishment', label: 'Поповнення', icon: RefreshCw },
@@ -33,15 +33,15 @@ export default function AutomationsPage() {
   useEffect(() => {
     async function load() {
       const [queueRes, commsRes, templatesRes, winBackRes] = await Promise.all([
-        supabase.from('automation_queue').select('*, clients(full_name)').order('scheduled_at', { ascending: true }),
-        supabase.from('communication_log').select('*').order('sent_at', { ascending: false }),
-        supabase.from('communication_templates').select('*'),
-        supabase.from('win_back_candidates').select('*'),
+        fetchAutomationQueueRpc(),
+        fetchCommunicationLogAllRpc(),
+        fetchCommunicationTemplatesListRpc(),
+        fetchWinBackCandidatesRpc(),
       ]);
-      setQueue((queueRes.data ?? []) as QueueRow[]);
-      setCommsAll(commsRes.data ?? []);
-      setTemplatesAll(templatesRes.data ?? []);
-      setWinBack(winBackRes.data ?? []);
+      setQueue(queueRes.data);
+      setCommsAll(commsRes.data);
+      setTemplatesAll(templatesRes.data);
+      setWinBack(winBackRes.data);
       setLoading(false);
     }
     load();
@@ -146,7 +146,7 @@ export default function AutomationsPage() {
               return (
                 <div key={q.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-gray-900">{q.clients?.full_name || `#${q.client_id}`}</p>
+                    <p className="text-sm font-medium text-gray-900">{q.client_name || `#${q.client_id}`}</p>
                     <p className="text-xs text-gray-500">{format(parseISO(q.scheduled_at), 'dd.MM.yyyy HH:mm')}</p>
                     {q.skip_reason && <p className="text-xs text-orange-500">{q.skip_reason}</p>}
                   </div>

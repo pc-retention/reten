@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Package, Plus, Edit2, Trash2, X, ArrowUp, ArrowDown, ArrowUpDown, FolderPlus } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { supabase } from '../lib/supabase';
 import type { Product } from '../types';
 import { DEFAULT_BADGE_ALPHA, DEFAULT_BADGE_HEX, getBadgeTextColor, hexToAlphaHex, parseAlphaHex } from '../lib/colors';
 import {
@@ -17,6 +16,8 @@ import {
   fetchProductSummaryRpc,
   rebuildPurchasesForBarcodeRpc,
   refreshClientsDenormalizedRpc,
+  updateProductActiveRpc,
+  updateProductRpc,
   renameProductBrandRpc,
   renameProductCategoryRpc,
 } from '../lib/serverQueries';
@@ -69,6 +70,69 @@ function pushToastId(toastId: string) {
   }
 }
 
+function sortCategorySummary(a: ProductCategorySummary, b: ProductCategorySummary) {
+  if (b.product_count !== a.product_count) {
+    return b.product_count - a.product_count;
+  }
+
+  return a.category.localeCompare(b.category, 'uk');
+}
+
+function sortBrandSummary(a: ProductBrandSummary, b: ProductBrandSummary) {
+  if (b.product_count !== a.product_count) {
+    return b.product_count - a.product_count;
+  }
+
+  return a.brand.localeCompare(b.brand, 'uk');
+}
+
+function mergeCategorySummary(
+  summaryRows: ProductCategorySummary[],
+  categoryNames: string[],
+) {
+  const summaryMap = new Map(summaryRows.map((row) => [row.category, row]));
+
+  for (const categoryName of categoryNames) {
+    if (!summaryMap.has(categoryName)) {
+      summaryMap.set(categoryName, {
+        category: categoryName,
+        product_count: 0,
+      });
+    }
+  }
+
+  return Array.from(summaryMap.values()).sort(sortCategorySummary);
+}
+
+function mergeBrandSummary(
+  summaryRows: ProductBrandSummary[],
+  brandRows: ProductBrandOption[],
+) {
+  const summaryMap = new Map(summaryRows.map((row) => [row.brand, row]));
+
+  for (const brandRow of brandRows) {
+    const existing = summaryMap.get(brandRow.brand);
+
+    if (!existing) {
+      summaryMap.set(brandRow.brand, {
+        brand: brandRow.brand,
+        brand_color: brandRow.brand_color,
+        product_count: 0,
+      });
+      continue;
+    }
+
+    if (!existing.brand_color && brandRow.brand_color) {
+      summaryMap.set(brandRow.brand, {
+        ...existing,
+        brand_color: brandRow.brand_color,
+      });
+    }
+  }
+
+  return Array.from(summaryMap.values()).sort(sortBrandSummary);
+}
+
 export default function ProductsPage() {
   const [tab, setTab] = useState<'products' | 'inactive' | 'categories' | 'brands'>('products');
   const [search, setSearch] = useState('');
@@ -112,30 +176,42 @@ export default function ProductsPage() {
       fetchProductBrandsListRpc(),
     ]);
 
-    if (!summaryRes.error && summaryRes.data) {
-      setSummary({
-        activeCount: summaryRes.data.active_count ?? 0,
-        inactiveCount: summaryRes.data.inactive_count ?? 0,
-        unknownCount: summaryRes.data.unknown_count ?? 0,
-        categoriesCount: summaryRes.data.categories_count ?? 0,
-        brandsCount: summaryRes.data.brands_count ?? 0,
-      });
+    const categoryNames = !categoriesListRes.error
+      ? categoriesListRes.data.map((item) => item.category)
+      : (!categoriesRes.error ? categoriesRes.data.map((item) => item.category) : []);
+
+    const brandRows = !brandsListRes.error
+      ? brandsListRes.data
+      : (!brandsRes.error
+        ? brandsRes.data.map((item) => ({ brand: item.brand, brand_color: item.brand_color }))
+        : []);
+
+    setSummary((prev) => ({
+      activeCount: summaryRes.data?.active_count ?? prev.activeCount,
+      inactiveCount: summaryRes.data?.inactive_count ?? prev.inactiveCount,
+      unknownCount: summaryRes.data?.unknown_count ?? prev.unknownCount,
+      categoriesCount: !categoriesListRes.error
+        ? categoryNames.length
+        : (summaryRes.data?.categories_count ?? prev.categoriesCount),
+      brandsCount: !brandsListRes.error
+        ? brandRows.length
+        : (summaryRes.data?.brands_count ?? prev.brandsCount),
+    }));
+
+    if (!categoriesRes.error || categoryNames.length > 0) {
+      setCategorySummary(mergeCategorySummary(categoriesRes.error ? [] : categoriesRes.data, categoryNames));
     }
 
-    if (!categoriesRes.error) {
-      setCategorySummary(categoriesRes.data);
+    if (categoryNames.length > 0 || !categoriesListRes.error) {
+      setCategories(categoryNames);
     }
 
-    if (!categoriesListRes.error) {
-      setCategories(categoriesListRes.data.map((item) => item.category));
+    if (!brandsRes.error || brandRows.length > 0) {
+      setBrandSummary(mergeBrandSummary(brandsRes.error ? [] : brandsRes.data, brandRows));
     }
 
-    if (!brandsRes.error) {
-      setBrandSummary(brandsRes.data);
-    }
-
-    if (!brandsListRes.error) {
-      setBrands(brandsListRes.data);
+    if (brandRows.length > 0 || !brandsListRes.error) {
+      setBrands(brandRows);
     }
   }, []);
 
@@ -242,13 +318,22 @@ export default function ProductsPage() {
       setEditingProduct(nextProduct);
     }
 
-    const { error } = await supabase
-      .from('products')
-      .update({ is_active: newVal })
-      .eq('barcode', product.barcode);
+    const { data: affected, error } = await updateProductActiveRpc(product.barcode, newVal);
 
     if (error) {
-      pushToastId(toast.error('Помилка оновлення. Переконайтесь що колонка is_active існує в БД.'));
+      console.error('toggleActive RPC error:', error);
+      pushToastId(toast.error(`Помилка: ${error.message}`));
+      setProducts(previousProducts);
+      setInactiveProducts(previousInactiveProducts);
+      setSummary(previousSummary);
+      setProductsTotal(previousProductsTotal);
+      setInactiveTotal(previousInactiveTotal);
+      if (editingProduct?.barcode === product.barcode) {
+        setEditingProduct(product);
+      }
+    } else if (affected === 0) {
+      console.error('toggleActive: 0 rows affected, barcode =', product.barcode);
+      pushToastId(toast.error(`Товар не знайдено в базі (barcode: ${product.barcode})`));
       setProducts(previousProducts);
       setInactiveProducts(previousInactiveProducts);
       setSummary(previousSummary);
@@ -258,19 +343,17 @@ export default function ProductsPage() {
         setEditingProduct(product);
       }
     } else {
-      if (newVal) {
-        const purchasesRefreshResult = await rebuildPurchasesForBarcodeRpc(product.barcode);
-        if (purchasesRefreshResult.error) {
-          pushToastId(toast.error('Товар увімкнено, але не вдалося добудувати нагадування'));
-        }
-      }
+      pushToastId(toast.success(newVal ? `"${product.name}" увімкнено` : `"${product.name}" вимкнено`));
 
-      const refreshResult = await refreshClientsDenormalizedRpc();
-      if (refreshResult.error) {
-        pushToastId(toast.error('Товар оновлено, але не вдалося перерахувати клієнтів'));
+      // Фонові задачі — не блокують UI
+      if (newVal) {
+        void rebuildPurchasesForBarcodeRpc(product.barcode);
+        void loadActiveProducts();
       } else {
-        pushToastId(toast.success(newVal ? `"${product.name}" увімкнено` : `"${product.name}" вимкнено`));
+        void loadInactiveProducts();
       }
+      void refreshClientsDenormalizedRpc();
+      void loadSummary();
     }
     setToggling(null);
   }
@@ -286,18 +369,17 @@ export default function ProductsPage() {
     const normalizedBrand = editingProduct.brand && editingProduct.brand.trim() !== ''
       ? editingProduct.brand.trim()
       : null;
+    const normalizedImageUrl = editingProduct.image_url ?? null;
 
-    const { error } = await supabase
-      .from('products')
-      .update({
-        name: editingProduct.name,
-        category: normalizedCategory,
-        brand: normalizedBrand,
-        price: editingProduct.price,
-        usage_days: editingProduct.usage_days,
-        image_url: editingProduct.image_url,
-      })
-      .eq('barcode', editingProduct.barcode);
+    const { error } = await updateProductRpc({
+      barcode:   editingProduct.barcode,
+      name:      editingProduct.name,
+      category:  normalizedCategory,
+      brand:     normalizedBrand,
+      price:     editingProduct.price,
+      usageDays: editingProduct.usage_days,
+      imageUrl:  normalizedImageUrl,
+    });
 
     if (error) {
       toast.error('Помилка збереження');

@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
-import { EyeOff, MessageSquare, Save, Settings } from 'lucide-react';
+import { EyeOff, KeyRound, LogOut, MessageSquare, Save, Settings, Shield } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { ADMIN_EMAIL_SETTING_KEY, ADMIN_USERNAME_SETTING_KEY, useAuth } from '../lib/auth';
 import { hideableNavItems } from '../lib/navigation';
 import { supabase } from '../lib/supabase';
+import { fetchCommunicationTemplatesListRpc, fetchSettingsListRpc } from '../lib/serverQueries';
 import type { CommunicationTemplate, Setting } from '../types';
 
 type SettingValues = Record<string, string>;
 type VisibilityValues = Record<string, boolean>;
 
 export default function SettingsPage() {
-  const [tab, setTab] = useState<'settings' | 'templates'>('settings');
+  const { adminUsername, refreshAdminIdentity, signOut } = useAuth();
+  const [tab, setTab] = useState<'settings' | 'security' | 'templates'>('settings');
   const [settings, setSettings] = useState<Setting[]>([]);
   const [templates, setTemplates] = useState<CommunicationTemplate[]>([]);
   const [settingValues, setSettingValues] = useState<SettingValues>({});
@@ -17,17 +20,31 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [savingVisibilityKey, setSavingVisibilityKey] = useState<string | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [savingPassword, setSavingPassword] = useState(false);
+  const [loginName, setLoginName] = useState(adminUsername);
+  const [savingLoginName, setSavingLoginName] = useState(false);
 
   const hideableKeys = useMemo(
     () => hideableNavItems.map((item) => item.visibilityKey).filter((key): key is string => Boolean(key)),
     [],
   );
 
+  const hiddenSettingKeys = useMemo(
+    () => new Set([...hideableKeys, ADMIN_EMAIL_SETTING_KEY, ADMIN_USERNAME_SETTING_KEY]),
+    [hideableKeys],
+  );
+
+  useEffect(() => {
+    setLoginName(adminUsername);
+  }, [adminUsername]);
+
   useEffect(() => {
     async function load() {
       const [settingsRes, templatesRes] = await Promise.all([
-        supabase.from('settings').select('*').order('key'),
-        supabase.from('communication_templates').select('*').order('communication_type').order('channel'),
+        fetchSettingsListRpc(),
+        fetchCommunicationTemplatesListRpc(),
       ]);
 
       const settingsRows = settingsRes.data ?? [];
@@ -101,6 +118,70 @@ export default function SettingsPage() {
     setSavingVisibilityKey(null);
   }
 
+  async function savePassword() {
+    if (!newPassword) {
+      toast.error('Введіть новий пароль');
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      toast.error('Пароль має містити щонайменше 6 символів');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      toast.error('Паролі не співпадають');
+      return;
+    }
+
+    setSavingPassword(true);
+
+    const { error } = await supabase.auth.updateUser({
+      password: newPassword,
+    });
+
+    if (error) {
+      toast.error('Не вдалося оновити пароль');
+    } else {
+      setNewPassword('');
+      setConfirmPassword('');
+      toast.success('Пароль оновлено');
+    }
+
+    setSavingPassword(false);
+  }
+
+  async function saveLoginName() {
+    const normalizedLoginName = loginName.trim().toLowerCase();
+
+    if (!normalizedLoginName) {
+      toast.error('Ім’я входу не може бути порожнім');
+      return;
+    }
+
+    setSavingLoginName(true);
+
+    const { error } = await supabase.rpc('upsert_public_setting', {
+      p_key: ADMIN_USERNAME_SETTING_KEY,
+      p_value: normalizedLoginName,
+      p_description: 'Ім’я адміністратора для входу в дашборд',
+    });
+
+    if (error) {
+      toast.error('Не вдалося оновити ім’я входу');
+    } else {
+      await refreshAdminIdentity();
+      toast.success('Ім’я входу оновлено');
+    }
+
+    setSavingLoginName(false);
+  }
+
+  async function handleSignOut() {
+    await signOut();
+    toast.success('Сесію завершено');
+  }
+
   if (loading) return <div className="text-center py-20 text-gray-400">Завантаження...</div>;
 
   return (
@@ -115,6 +196,14 @@ export default function SettingsPage() {
           }`}
         >
           <Settings className="w-4 h-4" /> Параметри
+        </button>
+        <button
+          onClick={() => setTab('security')}
+          className={`flex items-center gap-1.5 rounded-[14px] px-4 py-2 text-sm font-medium transition ${
+            tab === 'security' ? 'bg-white shadow text-gray-900' : 'text-gray-500'
+          }`}
+        >
+          <Shield className="w-4 h-4" /> Безпека
         </button>
         <button
           onClick={() => setTab('templates')}
@@ -173,7 +262,7 @@ export default function SettingsPage() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {settings
-                  .filter((setting) => !hideableKeys.includes(setting.key))
+                  .filter((setting) => !hiddenSettingKeys.has(setting.key))
                   .map((setting) => (
                     <tr key={setting.key} className="hover:bg-gray-50">
                       <td className="px-4 py-3 font-mono text-xs text-gray-700">{setting.key}</td>
@@ -199,6 +288,107 @@ export default function SettingsPage() {
                   ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {tab === 'security' && (
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="rounded-3xl border border-slate-200 bg-white shadow-sm">
+            <div className="border-b border-slate-100 px-6 py-5">
+              <div className="flex items-center gap-2 text-lg font-semibold text-slate-900">
+                <KeyRound className="h-5 w-5 text-indigo-600" />
+                Доступ адміністратора
+              </div>
+              <p className="mt-1 text-sm text-slate-500">
+                Вхід у дашборд працює через просту пару <span className="font-medium text-slate-700">ім’я + пароль</span>.
+              </p>
+            </div>
+
+            <div className="space-y-5 px-6 py-6">
+              <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                Поточне ім’я входу: <span className="font-medium text-slate-800">{adminUsername}</span>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+                <label className="block">
+                  <span className="mb-1.5 block text-sm font-medium text-slate-700">Ім’я входу</span>
+                  <input
+                    type="text"
+                    autoComplete="username"
+                    value={loginName}
+                    onChange={(event) => setLoginName(event.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-indigo-400 focus:bg-white"
+                    placeholder="Наприклад, admin"
+                  />
+                </label>
+                <button
+                  onClick={() => void saveLoginName()}
+                  disabled={savingLoginName}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
+                >
+                  <Save className="h-4 w-4" />
+                  Оновити ім’я
+                </button>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1.5 block text-sm font-medium text-slate-700">Новий пароль</span>
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    value={newPassword}
+                    onChange={(event) => setNewPassword(event.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-indigo-400 focus:bg-white"
+                    placeholder="Не менше 6 символів"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="mb-1.5 block text-sm font-medium text-slate-700">Повторіть пароль</span>
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    value={confirmPassword}
+                    onChange={(event) => setConfirmPassword(event.target.value)}
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-indigo-400 focus:bg-white"
+                    placeholder="Повторіть новий пароль"
+                  />
+                </label>
+              </div>
+
+              <div className="flex flex-wrap gap-3">
+                <button
+                  onClick={() => void savePassword()}
+                  disabled={savingPassword}
+                  className="inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60"
+                >
+                  <Save className="h-4 w-4" />
+                  Оновити пароль
+                </button>
+                <button
+                  onClick={() => void handleSignOut()}
+                  className="inline-flex items-center gap-2 rounded-2xl bg-slate-100 px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-200"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Вийти
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-amber-200 bg-amber-50/70 p-6 shadow-sm">
+            <div className="flex items-center gap-2 text-base font-semibold text-amber-950">
+              <Shield className="h-5 w-5" />
+              Пам’ятай
+            </div>
+            <div className="mt-3 space-y-3 text-sm leading-6 text-amber-900/85">
+              <p>Ім’я входу використовується лише в UI і не показує службовий email Supabase Auth.</p>
+              <p>Пароль змінюється для поточного адміністратора Supabase Auth.</p>
+              <p>Після зміни використовуй новий пароль для всіх наступних входів.</p>
+              <p>Після зміни імені входу нове значення одразу стане обов’язковим на екрані логіну.</p>
+            </div>
           </div>
         </div>
       )}

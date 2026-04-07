@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import type { Campaign, Client, ClientPurchase, CohortSnapshot, LoyaltyTransaction, MetricsDaily, OrderListItem, Product, UnknownBarcode } from '../types';
+import type { AutomationQueueItem, Campaign, Client, ClientOrder, ClientPurchase, CohortSnapshot, CommunicationLog, CommunicationTemplate, LoyaltyTransaction, MetricsDaily, OrderListItem, Product, Setting, UnknownBarcode, WinBackCandidate } from '../types';
 
 export type ClientListRow = Client & {
   total_count: number;
@@ -208,6 +208,14 @@ export async function refreshClientsDenormalizedRpc() {
     data: ((data ?? [])[0] ?? null) as { updated_clients: number; recalculated_rfm: number } | null,
     error,
   };
+}
+
+export async function updateProductActiveRpc(barcode: string, isActive: boolean) {
+  const { data, error } = await supabase.rpc('update_product_active', {
+    p_barcode: barcode,
+    p_is_active: isActive,
+  });
+  return { data: (data ?? 0) as number, error };
 }
 
 export async function rebuildPurchasesForBarcodeRpc(barcode: string) {
@@ -630,4 +638,98 @@ export async function fetchCohortMatrixRpc() {
     data: (data ?? []) as CohortSnapshot[],
     error,
   };
+}
+
+// ─── Settings & templates ────────────────────────────────────────────────────
+
+export async function fetchSettingsListRpc() {
+  const { data, error } = await supabase.rpc('get_settings_list');
+  return { data: (data ?? []) as Setting[], error };
+}
+
+export async function fetchCommunicationTemplatesListRpc() {
+  const { data, error } = await supabase.rpc('get_communication_templates_list');
+  return { data: (data ?? []) as CommunicationTemplate[], error };
+}
+
+// ─── Client purchases ────────────────────────────────────────────────────────
+
+export async function deleteClientPurchaseRpc(id: string) {
+  const { error } = await supabase.rpc('delete_client_purchase', { p_id: id });
+  return { error };
+}
+
+// ─── Client card ─────────────────────────────────────────────────────────────
+
+export async function fetchClientByIdRpc(clientId: number) {
+  const { data, error } = await supabase.rpc('get_client_by_id', { p_client_id: clientId });
+  return { data: ((data ?? [])[0] ?? null) as Client | null, error };
+}
+
+export async function fetchClientOrdersRpc(clientId: number) {
+  const { data, error } = await supabase.rpc('get_client_orders', { p_client_id: clientId });
+  return { data: (data ?? []) as ClientOrder[], error };
+}
+
+export async function fetchClientCommsRpc(clientId: number) {
+  const { data, error } = await supabase.rpc('get_client_comms', { p_client_id: clientId });
+  return { data: (data ?? []) as CommunicationLog[], error };
+}
+
+export async function fetchClientLoyaltyTransactionsRpc(clientId: number) {
+  const { data, error } = await supabase.rpc('get_client_loyalty_transactions', { p_client_id: clientId });
+  return { data: (data ?? []) as LoyaltyTransaction[], error };
+}
+
+export async function fetchRfmSegmentActionRpc(segmentName: string) {
+  const { data, error } = await supabase.rpc('get_rfm_segment_action', { p_segment_name: segmentName });
+  return { data: (data ?? null) as string | null, error };
+}
+
+export async function updateClientActiveRpc(clientId: number, isActive: boolean) {
+  const { error } = await supabase.rpc('update_client_active', {
+    p_client_id: clientId,
+    p_is_active: isActive,
+  });
+  return { error };
+}
+
+// ─── Automations ─────────────────────────────────────────────────────────────
+
+export type AutomationQueueRpcRow = Omit<AutomationQueueItem, 'client'> & { client_name: string | null };
+
+export async function fetchAutomationQueueRpc() {
+  const { data, error } = await supabase.rpc('get_automation_queue');
+  return { data: (data ?? []) as AutomationQueueRpcRow[], error };
+}
+
+export async function fetchCommunicationLogAllRpc() {
+  const { data, error } = await supabase.rpc('get_communication_log_all');
+  return { data: (data ?? []) as CommunicationLog[], error };
+}
+
+export async function fetchWinBackCandidatesRpc() {
+  const { data, error } = await supabase.rpc('get_win_back_candidates');
+  return { data: (data ?? []) as WinBackCandidate[], error };
+}
+
+export async function updateProductRpc(params: {
+  barcode: string;
+  name: string;
+  category: string | null;
+  brand: string | null;
+  price: number | null;
+  usageDays: number | null;
+  imageUrl: string | null;
+}) {
+  const { error } = await supabase.rpc('update_product', {
+    p_barcode:    params.barcode,
+    p_name:       params.name,
+    p_category:   params.category,
+    p_brand:      params.brand,
+    p_price:      params.price,
+    p_usage_days: params.usageDays,
+    p_image_url:  params.imageUrl,
+  });
+  return { error };
 }
