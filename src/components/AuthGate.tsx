@@ -50,6 +50,9 @@ export default function AuthGate({ children }: AuthGateProps) {
             <p className="mt-2 text-sm leading-6 text-slate-500">
               Доступ до дашборду відкритий лише після введення пароля адміністратора, без email і без окремого логіну.
             </p>
+            <p className="mt-1 text-xs leading-5 text-slate-400">
+              Після успішного входу цей браузер буде запам’ятований.
+            </p>
 
             <form onSubmit={handleLogin} className="mt-8 space-y-4">
               <label className="block">

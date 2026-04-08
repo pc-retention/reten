@@ -4,7 +4,8 @@ import { fetchSettingsListRpc } from './serverQueries';
 export const DASHBOARD_PASSWORD_SETTING_KEY = 'dashboard_password_hash';
 export const LEGACY_AUTH_SETTING_KEYS = ['auth_admin_email', 'auth_admin_username'] as const;
 
-const SESSION_STORAGE_KEY = 'reten-dashboard-session';
+const AUTH_STORAGE_KEY = 'reten-dashboard-device-auth';
+const LEGACY_SESSION_STORAGE_KEY = 'reten-dashboard-session';
 
 type SignInResult = 'success' | 'invalid_password' | 'password_not_configured';
 
@@ -23,7 +24,10 @@ function readStoredSession() {
     return false;
   }
 
-  return window.sessionStorage.getItem(SESSION_STORAGE_KEY) === 'true';
+  return (
+    window.localStorage.getItem(AUTH_STORAGE_KEY) === 'true'
+    || window.sessionStorage.getItem(LEGACY_SESSION_STORAGE_KEY) === 'true'
+  );
 }
 
 function bytesToHex(bytes: Uint8Array) {
@@ -92,7 +96,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     if (typeof window !== 'undefined') {
-      window.sessionStorage.setItem(SESSION_STORAGE_KEY, 'true');
+      window.localStorage.setItem(AUTH_STORAGE_KEY, 'true');
+      window.sessionStorage.removeItem(LEGACY_SESSION_STORAGE_KEY);
     }
 
     setIsAuthenticated(true);
@@ -101,7 +106,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function signOut() {
     if (typeof window !== 'undefined') {
-      window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
+      window.localStorage.removeItem(AUTH_STORAGE_KEY);
+      window.sessionStorage.removeItem(LEGACY_SESSION_STORAGE_KEY);
     }
 
     setIsAuthenticated(false);
@@ -119,6 +125,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const passwordSetting = settingsRes.data.find((item) => item.key === DASHBOARD_PASSWORD_SETTING_KEY);
       setPasswordHash(passwordSetting?.value ?? null);
+
+      if (typeof window !== 'undefined' && window.sessionStorage.getItem(LEGACY_SESSION_STORAGE_KEY) === 'true') {
+        window.localStorage.setItem(AUTH_STORAGE_KEY, 'true');
+        window.sessionStorage.removeItem(LEGACY_SESSION_STORAGE_KEY);
+        setIsAuthenticated(true);
+      }
+
       setLoading(false);
     }
 
