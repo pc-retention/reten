@@ -11,7 +11,7 @@ type ReminderRow = ClientPurchase & {
 };
 
 export default function RemindersPage() {
-  const [tab, setTab] = useState<'today' | 'overdue' | 'sent' | 'all'>('today');
+  const [tab, setTab] = useState<'today' | 'overdue' | 'upcoming' | 'sent' | 'all'>('today');
   const defaultDateRange = getDefaultReminderDateRange();
   const [dateFrom, setDateFrom] = useState(defaultDateRange.dateFrom);
   const [dateTo, setDateTo] = useState(defaultDateRange.dateTo);
@@ -56,16 +56,19 @@ export default function RemindersPage() {
 
   const todayReminders = allReminders.filter(r => getReminderStatus(r, todayDateKey) === 'today');
   const overdueReminders = allReminders.filter(r => getReminderStatus(r, todayDateKey) === 'overdue');
+  const upcomingReminders = allReminders.filter(r => getReminderStatus(r, todayDateKey) === 'upcoming');
   const sentReminders = allReminders.filter(r => getReminderStatus(r, todayDateKey) === 'sent');
 
   const displayReminders = tab === 'today' ? todayReminders
     : tab === 'overdue' ? overdueReminders
+    : tab === 'upcoming' ? upcomingReminders
     : tab === 'sent' ? sentReminders
     : allReminders;
 
   const tabCounts = {
     today: todayReminders.length,
     overdue: overdueReminders.length,
+    upcoming: upcomingReminders.length,
     sent: sentReminders.length,
     all: allReminders.length,
   };
@@ -79,10 +82,11 @@ export default function RemindersPage() {
         {[
           { key: 'today', label: 'Сьогодні', icon: Bell, color: 'text-blue-600' },
           { key: 'overdue', label: 'Прострочені', icon: AlertTriangle, color: 'text-red-600' },
+          { key: 'upcoming', label: 'Майбутні', icon: Send, color: 'text-indigo-600' },
           { key: 'sent', label: 'Відправлені', icon: CheckCircle, color: 'text-green-600' },
           { key: 'all', label: 'Всі', icon: Clock, color: 'text-gray-600' },
         ].map(t => (
-          <button key={t.key} onClick={() => setTab(t.key as 'today' | 'overdue' | 'sent' | 'all')}
+          <button key={t.key} onClick={() => setTab(t.key as 'today' | 'overdue' | 'upcoming' | 'sent' | 'all')}
             className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-md transition ${
               tab === t.key ? 'bg-white shadow text-gray-900' : 'text-gray-500'
             }`}>
@@ -129,7 +133,9 @@ export default function RemindersPage() {
                 <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">Немає нагадувань</td></tr>
               )}
               {displayReminders.map(r => {
-                const isOverdue = getReminderStatus(r, todayDateKey) === 'overdue';
+                const reminderStatus = getReminderStatus(r, todayDateKey);
+                const isOverdue = reminderStatus === 'overdue';
+                const isUpcoming = reminderStatus === 'upcoming';
                 return (
                   <tr key={r.id} className={`hover:bg-gray-50 ${isOverdue ? 'bg-red-50/50' : ''}`}>
                     <td className="px-4 py-3">
@@ -152,6 +158,10 @@ export default function RemindersPage() {
                         <span className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-medium">Надіслано</span>
                       ) : isOverdue ? (
                         <span className="px-2 py-1 bg-red-100 text-red-700 rounded-full text-xs font-medium">Прострочено</span>
+                      ) : isUpcoming ? (
+                        <span className="px-2 py-1 bg-indigo-100 text-indigo-700 rounded-full text-xs font-medium">Майбутнє</span>
+                      ) : reminderStatus === 'today' ? (
+                        <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">Сьогодні</span>
                       ) : (
                         <span className="px-2 py-1 bg-yellow-100 text-yellow-700 rounded-full text-xs font-medium">Очікує</span>
                       )}

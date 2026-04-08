@@ -45,11 +45,13 @@ export default function OrdersPage() {
     .filter((orderId): orderId is number => typeof orderId === 'number' && Number.isFinite(orderId));
   const selectedOrderIdSet = new Set(selectedOrderIds);
   const allVisibleSelected = visibleOrderIds.length > 0 && visibleOrderIds.every(orderId => selectedOrderIdSet.has(orderId));
+  const pageStart = total === 0 ? 0 : page * PAGE_SIZE + 1;
+  const pageEnd = page * PAGE_SIZE + orders.length;
   const dbInfoLabel = dbTotal === null
     ? 'Всього в БД: —'
-    : visibleOrderIds.length > 0
-      ? `Всього в БД: ${dbTotal.toLocaleString('uk-UA')} -- з #${Math.min(...visibleOrderIds).toLocaleString('uk-UA')} по #${Math.max(...visibleOrderIds).toLocaleString('uk-UA')}`
-      : `Всього в БД: ${dbTotal.toLocaleString('uk-UA')}`;
+    : total > 0
+      ? `Всього в БД: ${dbTotal.toLocaleString('uk-UA')} • у вибірці: ${total.toLocaleString('uk-UA')} • показано: ${pageStart.toLocaleString('uk-UA')}-${pageEnd.toLocaleString('uk-UA')}`
+      : `Всього в БД: ${dbTotal.toLocaleString('uk-UA')} • у вибірці: 0`;
 
   const loadDbTotal = useCallback(async () => {
     const { count } = await supabase
@@ -96,6 +98,27 @@ export default function OrdersPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadDbTotal();
   }, [loadDbTotal]);
+
+  useEffect(() => {
+    function refreshOrdersPage() {
+      void load();
+      void loadDbTotal();
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'visible') {
+        refreshOrdersPage();
+      }
+    }
+
+    window.addEventListener('focus', refreshOrdersPage);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('focus', refreshOrdersPage);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [load, loadDbTotal]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });

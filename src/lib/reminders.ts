@@ -10,7 +10,7 @@ export interface ReminderStatusSource {
 export function getDefaultReminderDateRange() {
   return {
     dateFrom: format(addMonths(new Date(), -4), 'yyyy-MM-dd'),
-    dateTo: format(new Date(), 'yyyy-MM-dd'),
+    dateTo: format(addMonths(new Date(), 4), 'yyyy-MM-dd'),
   };
 }
 
