@@ -46,11 +46,8 @@ export default function AuthGate({ children }: AuthGateProps) {
             <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-50">
               <LockKeyhole className="h-7 w-7 text-indigo-600" />
             </div>
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Вхід адміністратора</h1>
-            <p className="mt-2 text-sm leading-6 text-slate-500">
-              Доступ до дашборду відкритий лише після введення пароля адміністратора, без email і без окремого логіну.
-            </p>
-            <p className="mt-1 text-xs leading-5 text-slate-400">
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Вхід</h1>
+            <p className="mt-2 text-xs leading-5 text-slate-400">
               Після успішного входу цей браузер буде запам’ятований.
             </p>
 
