@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowDown, ArrowUp, ShoppingCart, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowDown, ArrowUp, ShoppingCart, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import type { OrderListItem } from '../types';
-import { fetchOrdersPageRpc } from '../lib/serverQueries';
+import { deleteOrdersBatchRpc, fetchOrdersPageRpc } from '../lib/serverQueries';
 import { getBadgeTextColor } from '../lib/colors';
+import { supabase } from '../lib/supabase';
 
 const PAGE_SIZE = 100;
 
@@ -16,19 +17,47 @@ function safeDate(value: string | null | undefined) {
   }
 }
 
+function safeDateTime(value: string | null | undefined) {
+  if (!value) return '-';
+  try {
+    return format(parseISO(value), 'dd.MM.yyyy HH:mm');
+  } catch {
+    return '-';
+  }
+}
+
 export default function OrdersPage() {
   const [orders, setOrders] = useState<OrderListItem[]>([]);
   const [total, setTotal] = useState(0);
+  const [dbTotal, setDbTotal] = useState<number | null>(null);
   const [page, setPage] = useState(0);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [selectedOrderIds, setSelectedOrderIds] = useState<number[]>([]);
   const [sortField, setSortField] = useState<'order_id' | 'order_created_at' | 'client_name' | 'order_date' | 'source_name' | 'status_changed_at' | 'status_name' | 'products_count' | 'total_amount'>('order_date');
   const [sortAsc, setSortAsc] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState(false);
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
-  const from = total === 0 ? 0 : page * PAGE_SIZE + 1;
-  const to = Math.min(page * PAGE_SIZE + PAGE_SIZE, total);
+  const visibleOrderIds = orders
+    .map(order => order.order_id)
+    .filter((orderId): orderId is number => typeof orderId === 'number' && Number.isFinite(orderId));
+  const selectedOrderIdSet = new Set(selectedOrderIds);
+  const allVisibleSelected = visibleOrderIds.length > 0 && visibleOrderIds.every(orderId => selectedOrderIdSet.has(orderId));
+  const dbInfoLabel = dbTotal === null
+    ? 'Всього в БД: —'
+    : visibleOrderIds.length > 0
+      ? `Всього в БД: ${dbTotal.toLocaleString('uk-UA')} -- з #${Math.min(...visibleOrderIds).toLocaleString('uk-UA')} по #${Math.max(...visibleOrderIds).toLocaleString('uk-UA')}`
+      : `Всього в БД: ${dbTotal.toLocaleString('uk-UA')}`;
+
+  const loadDbTotal = useCallback(async () => {
+    const { count } = await supabase
+      .from('client_orders')
+      .select('id', { count: 'exact', head: true });
+
+    setDbTotal(count ?? 0);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -41,18 +70,47 @@ export default function OrdersPage() {
       sortAsc,
     });
 
+    if (result.error) {
+      setOrders([]);
+      setTotal(0);
+      setLoading(false);
+      return;
+    }
+
+    if (result.data.length === 0 && page > 0) {
+      setPage(prev => Math.max(0, prev - 1));
+      return;
+    }
+
     setOrders(result.data);
     setTotal(result.data[0]?.total_count ?? 0);
     setLoading(false);
   }, [page, dateFrom, dateTo, sortField, sortAsc]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadDbTotal();
+  }, [loadDbTotal]);
+
+  useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [page]);
+
+  useEffect(() => {
+    const visibleSet = new Set(
+      orders
+        .map(order => order.order_id)
+        .filter((orderId): orderId is number => typeof orderId === 'number' && Number.isFinite(orderId)),
+    );
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSelectedOrderIds(prev => prev.filter(orderId => visibleSet.has(orderId)));
+  }, [orders]);
 
   function onDateChange(setter: (value: string) => void, value: string) {
     setPage(0);
@@ -83,11 +141,70 @@ export default function OrdersPage() {
     );
   }
 
+  function toggleOrderSelection(orderId: number) {
+    setSelectedOrderIds(prev => (
+      prev.includes(orderId)
+        ? prev.filter(selectedId => selectedId !== orderId)
+        : [...prev, orderId]
+    ));
+  }
+
+  function toggleSelectAllVisible() {
+    setSelectedOrderIds(prev => {
+      if (allVisibleSelected) {
+        return prev.filter(orderId => !visibleOrderIds.includes(orderId));
+      }
+
+      const next = new Set(prev);
+      visibleOrderIds.forEach(orderId => next.add(orderId));
+      return Array.from(next);
+    });
+  }
+
+  async function handleDeleteSelected() {
+    if (selectedOrderIds.length === 0 || deleting) return;
+
+    const isSingleOrder = selectedOrderIds.length === 1;
+    const confirmed = window.confirm(
+      isSingleOrder
+        ? `Видалити замовлення #${selectedOrderIds[0].toLocaleString('uk-UA')} з БД?`
+        : `Видалити ${selectedOrderIds.length.toLocaleString('uk-UA')} замовлень з БД? Це також видалить товари в замовленнях і пов'язані записи.`,
+    );
+
+    if (!confirmed) return;
+
+    setDeleting(true);
+    const result = await deleteOrdersBatchRpc(selectedOrderIds);
+
+    if (result.error) {
+      window.alert('Не вдалося видалити вибрані замовлення з БД.');
+      setDeleting(false);
+      return;
+    }
+
+    const deletedCount = result.data?.deleted_orders ?? selectedOrderIds.length;
+    const removedWholePage = deletedCount >= orders.length && selectedOrderIds.length === orders.length;
+
+    setSelectedOrderIds([]);
+    await loadDbTotal();
+
+    if (removedWholePage && page > 0) {
+      setDeleting(false);
+      setPage(prev => Math.max(0, prev - 1));
+      return;
+    }
+
+    await load();
+    setDeleting(false);
+  }
+
   return (
     <div className="space-y-6">
-      <div className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Замовлення ({total.toLocaleString()})</h1>
-        {!loading && <p className="text-sm text-gray-400">{from}–{to} з {total.toLocaleString()}</p>}
+      <div className="flex items-baseline">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h1 className="text-2xl font-bold text-gray-900">Замовлення ({total.toLocaleString('uk-UA')})</h1>
+          <p className="text-sm text-gray-400">{dbInfoLabel}</p>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -109,6 +226,27 @@ export default function OrdersPage() {
           {sortAsc ? <ArrowUp className="w-4 h-4" /> : <ArrowDown className="w-4 h-4" />}
           {sortAsc ? 'За зростанням' : 'За спаданням'}
         </button>
+
+        <button
+          type="button"
+          onClick={toggleSelectAllVisible}
+          disabled={orders.length === 0 || deleting}
+          className="px-4 py-2 border border-gray-200 rounded-lg text-sm font-medium bg-white hover:bg-gray-50 text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {allVisibleSelected ? `Зняти вибір (${visibleOrderIds.length.toLocaleString('uk-UA')})` : `Вибрати всі на сторінці (${visibleOrderIds.length.toLocaleString('uk-UA')})`}
+        </button>
+
+        <button
+          type="button"
+          onClick={handleDeleteSelected}
+          disabled={selectedOrderIds.length === 0 || deleting}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <Trash2 className="w-4 h-4" />
+          {deleting ? 'Видалення...' : `Видалити (${selectedOrderIds.length.toLocaleString('uk-UA')})`}
+        </button>
+
+        <p className="text-sm text-gray-400">Вибрано: {selectedOrderIds.length.toLocaleString('uk-UA')}</p>
       </div>
 
       {loading ? (
@@ -119,8 +257,19 @@ export default function OrdersPage() {
             <table className="w-full text-sm">
               <thead className="bg-gray-50">
                 <tr>
+                  <th className="px-4 py-3 w-12">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      onChange={toggleSelectAllVisible}
+                      disabled={orders.length === 0 || deleting}
+                      className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                      aria-label="Вибрати всі замовлення на сторінці"
+                    />
+                  </th>
                   <th className="text-left px-4 py-3 text-gray-500 font-medium">{renderSortLabel('№ замовлення', 'order_id')}</th>
                   <th className="text-left px-4 py-3 text-gray-500 font-medium hidden lg:table-cell">{renderSortLabel('Дата створення', 'order_created_at')}</th>
+                  <th className="text-left px-4 py-3 text-gray-500 font-medium hidden xl:table-cell">Додано в БД</th>
                   <th className="text-left px-4 py-3 text-gray-500 font-medium hidden md:table-cell">{renderSortLabel('Клієнт', 'client_name')}</th>
                   <th className="text-left px-4 py-3 text-gray-500 font-medium">{renderSortLabel('Дата', 'order_date')}</th>
                   <th className="text-left px-4 py-3 text-gray-500 font-medium hidden md:table-cell">{renderSortLabel('Джерело', 'source_name')}</th>
@@ -132,12 +281,23 @@ export default function OrdersPage() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {orders.length === 0 && (
-                  <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400">Немає замовлень за цими фільтрами</td></tr>
+                  <tr><td colSpan={11} className="px-4 py-10 text-center text-gray-400">Немає замовлень за цими фільтрами</td></tr>
                 )}
                 {orders.map(order => (
                   <tr key={order.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedOrderIdSet.has(order.order_id)}
+                        onChange={() => toggleOrderSelection(order.order_id)}
+                        disabled={deleting}
+                        className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        aria-label={`Вибрати замовлення #${order.order_id}`}
+                      />
+                    </td>
                     <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">#{order.order_id}</td>
                     <td className="px-4 py-3 text-gray-500 whitespace-nowrap hidden lg:table-cell">{safeDate(order.order_created_at)}</td>
+                    <td className="px-4 py-3 text-gray-500 whitespace-nowrap hidden xl:table-cell">{safeDateTime(order.created_at)}</td>
                     <td className="px-4 py-3 text-gray-700 hidden md:table-cell">{order.client_name || `#${order.client_id}`}</td>
                     <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{safeDate(order.order_date)}</td>
                     <td className="px-4 py-3 hidden md:table-cell">

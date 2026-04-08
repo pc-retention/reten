@@ -2,7 +2,6 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import { fetchSettingsListRpc } from './serverQueries';
 
 export const DASHBOARD_PASSWORD_SETTING_KEY = 'dashboard_password_hash';
-export const LEGACY_AUTH_SETTING_KEYS = ['auth_admin_email', 'auth_admin_username'] as const;
 
 const AUTH_STORAGE_KEY = 'reten-dashboard-device-auth';
 const LEGACY_SESSION_STORAGE_KEY = 'reten-dashboard-session';
@@ -38,16 +37,6 @@ async function sha256Hex(value: string) {
   const encodedValue = new TextEncoder().encode(value);
   const digestBuffer = await crypto.subtle.digest('SHA-256', encodedValue);
   return bytesToHex(new Uint8Array(digestBuffer));
-}
-
-export async function createDashboardPasswordHash(password: string) {
-  const saltBytes = new Uint8Array(16);
-  crypto.getRandomValues(saltBytes);
-
-  const salt = bytesToHex(saltBytes);
-  const digest = await sha256Hex(`${salt}:${password}`);
-
-  return `sha256$${salt}$${digest}`;
 }
 
 async function verifyDashboardPassword(password: string, storedHash: string | null) {
@@ -157,6 +146,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   const context = useContext(AuthContext);
 

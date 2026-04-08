@@ -104,6 +104,16 @@ export interface LoyaltyTopClientRow {
   loyalty_points: number;
 }
 
+export interface DeleteOrdersBatchResult {
+  deleted_orders: number;
+  deleted_order_items: number;
+  deleted_loyalty_transactions: number;
+  deleted_processed_orders: number;
+  rebuilt_purchases: number;
+  updated_clients: number;
+  recalculated_rfm: number;
+}
+
 export type LoyaltyTransactionRow = LoyaltyTransaction & {
   client_name: string | null;
   total_count: number;
@@ -572,6 +582,17 @@ export async function fetchOrdersPageRpc(params: OrdersPageParams) {
 
   return {
     data: (data ?? []) as OrderListItem[],
+    error,
+  };
+}
+
+export async function deleteOrdersBatchRpc(orderIds: number[]) {
+  const { data, error } = await supabase.rpc('delete_orders_batch', {
+    p_order_ids: orderIds,
+  });
+
+  return {
+    data: ((data ?? [])[0] ?? null) as DeleteOrdersBatchResult | null,
     error,
   };
 }

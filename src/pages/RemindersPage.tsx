@@ -82,7 +82,7 @@ export default function RemindersPage() {
           { key: 'sent', label: 'Відправлені', icon: CheckCircle, color: 'text-green-600' },
           { key: 'all', label: 'Всі', icon: Clock, color: 'text-gray-600' },
         ].map(t => (
-          <button key={t.key} onClick={() => setTab(t.key as any)}
+          <button key={t.key} onClick={() => setTab(t.key as 'today' | 'overdue' | 'sent' | 'all')}
             className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-md transition ${
               tab === t.key ? 'bg-white shadow text-gray-900' : 'text-gray-500'
             }`}>

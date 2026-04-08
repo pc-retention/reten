@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { EyeOff, KeyRound, LogOut, MessageSquare, Save, Settings, Shield } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { DASHBOARD_PASSWORD_SETTING_KEY, LEGACY_AUTH_SETTING_KEYS, createDashboardPasswordHash, useAuth } from '../lib/auth';
+import { DASHBOARD_PASSWORD_SETTING_KEY, useAuth } from '../lib/auth';
+import { LEGACY_AUTH_SETTING_KEYS, createDashboardPasswordHash } from '../lib/authUtils';
 import { hideableNavItems } from '../lib/navigation';
 import { supabase } from '../lib/supabase';
 import { fetchCommunicationTemplatesListRpc, fetchSettingsListRpc } from '../lib/serverQueries';
