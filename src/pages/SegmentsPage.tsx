@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Edit2, Save, Settings2, Target, Users, Wand2, X } from 'lucide-react';
+import { Edit2, Plus, Save, Settings2, Target, Users, Wand2, X } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { DEFAULT_BADGE_HEX, getBadgeTextColor, hexToAlphaHex, parseAlphaHex } from '../lib/colors';
+import { DEFAULT_BADGE_ALPHA, DEFAULT_BADGE_HEX, getBadgeTextColor, hexToAlphaHex, parseAlphaHex } from '../lib/colors';
 import { getSegmentLabel } from '../lib/segments';
 import {
   fetchRfmConfigListRpc,
   fetchRfmSegmentsListRpc,
+  refreshClientsDenormalizedRpc,
   seedDefaultRfmReferenceRpc,
   upsertRfmConfigRpc,
   upsertRfmSegmentRpc,
@@ -42,6 +43,8 @@ type ConfigDraft = {
   minValue: string;
   maxValue: string;
 };
+
+const NEW_SEGMENT_KEY = '__new_segment__';
 
 function parseScores(value: string) {
   return value
@@ -130,6 +133,10 @@ export default function SegmentsPage() {
   }, [clients]);
 
   const segmentClients = selectedSegment ? clients.filter((c) => c.rfm_segment === selectedSegment) : [];
+  const nextSegmentPriority = useMemo(
+    () => rfmSegments.reduce((maxPriority, segment) => Math.max(maxPriority, segment.priority), 0) + 1,
+    [rfmSegments],
+  );
 
   function startSegmentEdit(segment: RfmSegment) {
     const parsedColor = parseAlphaHex(segment.color);
@@ -147,6 +154,23 @@ export default function SegmentsPage() {
     });
   }
 
+  function startSegmentCreate() {
+    setTab('overview');
+    setSelectedSegment(null);
+    setEditingSegment(NEW_SEGMENT_KEY);
+    setSegmentDraft({
+      segmentName: '',
+      rScores: '5',
+      fScores: '5',
+      mScores: '5',
+      colorHex: DEFAULT_BADGE_HEX,
+      colorOpacity: Math.round(DEFAULT_BADGE_ALPHA * 100),
+      priority: nextSegmentPriority,
+      recommendedAction: '',
+      communicationFrequencyDays: 7,
+    });
+  }
+
   function cancelSegmentEdit() {
     setEditingSegment(null);
     setSegmentDraft(null);
@@ -154,9 +178,15 @@ export default function SegmentsPage() {
 
   async function saveSegment() {
     if (!segmentDraft) return;
+    const segmentName = segmentDraft.segmentName.trim();
     const rScores = parseScores(segmentDraft.rScores);
     const fScores = parseScores(segmentDraft.fScores);
     const mScores = parseScores(segmentDraft.mScores);
+
+    if (!segmentName) {
+      toast.error('Вкажи назву сегмента');
+      return;
+    }
 
     if (rScores.length === 0 || fScores.length === 0 || mScores.length === 0) {
       toast.error('R, F і M повинні містити значення від 1 до 5');
@@ -164,8 +194,9 @@ export default function SegmentsPage() {
     }
 
     setSavingSegment(true);
+    const isCreating = editingSegment === NEW_SEGMENT_KEY;
     const { error } = await upsertRfmSegmentRpc({
-      segmentName: segmentDraft.segmentName,
+      segmentName,
       rScores,
       fScores,
       mScores,
@@ -178,7 +209,12 @@ export default function SegmentsPage() {
     if (error) {
       toast.error('Не вдалося оновити сегмент');
     } else {
-      toast.success('Сегмент оновлено');
+      const refreshResult = await refreshClientsDenormalizedRpc();
+      if (refreshResult.error) {
+        toast.error('Сегмент збережено, але не вдалося перерахувати клієнтів');
+      } else {
+        toast.success(isCreating ? 'Сегмент створено' : 'Сегмент оновлено');
+      }
       await load();
       cancelSegmentEdit();
     }
@@ -227,6 +263,118 @@ export default function SegmentsPage() {
     return 'bg-indigo-700 text-white';
   }
 
+  function renderSegmentEditorCard() {
+    if (!segmentDraft) {
+      return null;
+    }
+
+    return (
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <label className="text-xs text-gray-500">Назва сегмента</label>
+          <input
+            value={segmentDraft.segmentName}
+            onChange={(e) => setSegmentDraft({ ...segmentDraft, segmentName: e.target.value })}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+            placeholder="Наприклад, VIP Reactivation"
+          />
+        </div>
+
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <label className="text-xs text-gray-500">R</label>
+            <input
+              value={segmentDraft.rScores}
+              onChange={(e) => setSegmentDraft({ ...segmentDraft, rScores: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-500">F</label>
+            <input
+              value={segmentDraft.fScores}
+              onChange={(e) => setSegmentDraft({ ...segmentDraft, fScores: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-500">M</label>
+            <input
+              value={segmentDraft.mScores}
+              onChange={(e) => setSegmentDraft({ ...segmentDraft, mScores: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-[auto_1fr] gap-3 items-center">
+          <input
+            type="color"
+            value={segmentDraft.colorHex}
+            onChange={(e) => setSegmentDraft({ ...segmentDraft, colorHex: e.target.value })}
+            className="h-10 w-14 border border-gray-300 rounded-lg bg-white p-1"
+          />
+          <div>
+            <input
+              type="range"
+              min="5"
+              max="100"
+              value={segmentDraft.colorOpacity}
+              onChange={(e) => setSegmentDraft({ ...segmentDraft, colorOpacity: Number(e.target.value) })}
+              className="w-full"
+            />
+            <div className="text-xs text-gray-500">{segmentDraft.colorOpacity}%</div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs text-gray-500">Пріоритет</label>
+            <input
+              type="number"
+              value={segmentDraft.priority}
+              onChange={(e) => setSegmentDraft({ ...segmentDraft, priority: Number(e.target.value) })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-500">Частота, днів</label>
+            <input
+              type="number"
+              value={segmentDraft.communicationFrequencyDays}
+              onChange={(e) => setSegmentDraft({ ...segmentDraft, communicationFrequencyDays: Number(e.target.value) })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="text-xs text-gray-500">Рекомендована дія</label>
+          <textarea
+            value={segmentDraft.recommendedAction}
+            onChange={(e) => setSegmentDraft({ ...segmentDraft, recommendedAction: e.target.value })}
+            rows={3}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+          />
+        </div>
+
+        <div className="flex items-center justify-end gap-2">
+          <button onClick={cancelSegmentEdit} className="px-3 py-2 text-sm rounded-lg bg-gray-100 text-gray-700">
+            <X className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => void saveSegment()}
+            disabled={savingSegment}
+            className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-indigo-600 text-white disabled:opacity-50"
+          >
+            <Save className="w-4 h-4" />
+            Зберегти
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return <div className="text-center py-20 text-gray-400">Завантаження...</div>;
   }
@@ -238,16 +386,25 @@ export default function SegmentsPage() {
           <h1 className="text-2xl font-bold text-gray-900">RFM Сегменти</h1>
           <p className="text-sm text-gray-500 mt-1">Керуйте сегментами, порогами скорингу та кольорами.</p>
         </div>
-        {rfmSegments.length === 0 && (
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => void seedDefaults()}
-            disabled={seeding}
-            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition disabled:opacity-50"
+            onClick={startSegmentCreate}
+            className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition"
           >
-            <Wand2 className="w-4 h-4" />
-            Заповнити стандартно
+            <Plus className="w-4 h-4" />
+            Новий сегмент
           </button>
-        )}
+          {rfmSegments.length === 0 && (
+            <button
+              onClick={() => void seedDefaults()}
+              disabled={seeding}
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition disabled:opacity-50"
+            >
+              <Wand2 className="w-4 h-4" />
+              Заповнити стандартно
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex gap-1 bg-gray-100 p-1 rounded-lg w-fit">
@@ -281,114 +438,18 @@ export default function SegmentsPage() {
 
       {tab === 'overview' && !selectedSegment && rfmSegments.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {editingSegment === NEW_SEGMENT_KEY && segmentDraft && (
+            <div className="bg-white rounded-xl border border-indigo-200 p-5 shadow-sm">
+              {renderSegmentEditorCard()}
+            </div>
+          )}
           {rfmSegments.map((segment) => {
             const count = segmentCounts[segment.segment_name] || 0;
             const isEditing = editingSegment === segment.segment_name && segmentDraft;
             return (
               <div key={segment.segment_name} className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
                 {isEditing ? (
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <label className="text-xs text-gray-500">Назва сегмента</label>
-                      <input
-                        value={segmentDraft.segmentName}
-                        onChange={(e) => setSegmentDraft({ ...segmentDraft, segmentName: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-3">
-                      <div>
-                        <label className="text-xs text-gray-500">R</label>
-                        <input
-                          value={segmentDraft.rScores}
-                          onChange={(e) => setSegmentDraft({ ...segmentDraft, rScores: e.target.value })}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-gray-500">F</label>
-                        <input
-                          value={segmentDraft.fScores}
-                          onChange={(e) => setSegmentDraft({ ...segmentDraft, fScores: e.target.value })}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-gray-500">M</label>
-                        <input
-                          value={segmentDraft.mScores}
-                          onChange={(e) => setSegmentDraft({ ...segmentDraft, mScores: e.target.value })}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-[auto_1fr] gap-3 items-center">
-                      <input
-                        type="color"
-                        value={segmentDraft.colorHex}
-                        onChange={(e) => setSegmentDraft({ ...segmentDraft, colorHex: e.target.value })}
-                        className="h-10 w-14 border border-gray-300 rounded-lg bg-white p-1"
-                      />
-                      <div>
-                        <input
-                          type="range"
-                          min="5"
-                          max="100"
-                          value={segmentDraft.colorOpacity}
-                          onChange={(e) => setSegmentDraft({ ...segmentDraft, colorOpacity: Number(e.target.value) })}
-                          className="w-full"
-                        />
-                        <div className="text-xs text-gray-500">{segmentDraft.colorOpacity}%</div>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="text-xs text-gray-500">Пріоритет</label>
-                        <input
-                          type="number"
-                          value={segmentDraft.priority}
-                          onChange={(e) => setSegmentDraft({ ...segmentDraft, priority: Number(e.target.value) })}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-gray-500">Частота, днів</label>
-                        <input
-                          type="number"
-                          value={segmentDraft.communicationFrequencyDays}
-                          onChange={(e) => setSegmentDraft({ ...segmentDraft, communicationFrequencyDays: Number(e.target.value) })}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="text-xs text-gray-500">Рекомендована дія</label>
-                      <textarea
-                        value={segmentDraft.recommendedAction}
-                        onChange={(e) => setSegmentDraft({ ...segmentDraft, recommendedAction: e.target.value })}
-                        rows={3}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-end gap-2">
-                      <button onClick={cancelSegmentEdit} className="px-3 py-2 text-sm rounded-lg bg-gray-100 text-gray-700">
-                        <X className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => void saveSegment()}
-                        disabled={savingSegment}
-                        className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-indigo-600 text-white disabled:opacity-50"
-                      >
-                        <Save className="w-4 h-4" />
-                        Зберегти
-                      </button>
-                    </div>
-                  </div>
+                  renderSegmentEditorCard()
                 ) : (
                   <>
                     <div className="flex items-start justify-between gap-3 mb-3">

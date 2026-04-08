@@ -6,6 +6,7 @@ import type { Client, ClientOrder, CommunicationLog, LoyaltyTransaction, ClientP
 import {
   fetchClientByIdRpc,
   fetchClientCommsRpc,
+  fetchLoyaltyTiersListRpc,
   fetchClientLoyaltyTransactionsRpc,
   fetchClientOrdersRpc,
   fetchClientsPageRpc,
@@ -14,33 +15,11 @@ import {
   fetchRfmSegmentsListRpc,
   updateClientActiveRpc,
 } from '../lib/serverQueries';
+import { DEFAULT_BADGE_ALPHA, DEFAULT_BADGE_HEX, getBadgeTextColor, hexToAlphaHex } from '../lib/colors';
+import { getTierBadgeStyle, getTierLabel } from '../lib/loyalty';
+import { getSegmentLabel } from '../lib/segments';
 
 const PAGE_SIZE = 100;
-
-const tierColors: Record<string, string> = {
-  bronze: 'bg-amber-100 text-amber-800',
-  silver: 'bg-gray-200 text-gray-700',
-  gold: 'bg-yellow-100 text-yellow-800',
-  platinum: 'bg-purple-100 text-purple-800',
-};
-
-const segmentColors: Record<string, string> = {
-  'Champions': '#22c55e', 'Loyal': '#3b82f6', 'Potential Loyal': '#8b5cf6',
-  'New Customers': '#06b6d4', 'Promising': '#f59e0b', 'Need Attention': '#f97316',
-  'About To Sleep': '#ef4444', 'At Risk': '#dc2626', "Can't Lose Them": '#991b1b',
-  'Hibernating': '#6b7280', 'Lost': '#374151',
-};
-
-const tierNames: Record<string, string> = {
-  bronze: 'Бронза', silver: 'Срібло', gold: 'Золото', platinum: 'Платина'
-};
-
-const segmentNames: Record<string, string> = {
-  'Champions': 'Чемпіони', 'Loyal': 'Лояльні', 'Potential Loyal': 'Потенційно лояльні',
-  'New Customers': 'Нові клієнти', 'Promising': 'Перспективні', 'Need Attention': 'Потребують уваги',
-  'About To Sleep': 'Засинають', 'At Risk': 'В зоні ризику', "Can't Lose Them": 'Не можна втратити',
-  'Hibernating': 'Сплячі', 'Lost': 'Втрачені'
-};
 
 function safeDate(val: string | null | undefined) {
   if (!val) return '-';
@@ -51,6 +30,15 @@ type ClientReminderRow = ClientPurchase & {
   client_name: string | null;
   client_phone: string | null;
 };
+
+function getSegmentBadgeStyle(color: string | null | undefined) {
+  const backgroundColor = color || hexToAlphaHex(DEFAULT_BADGE_HEX, DEFAULT_BADGE_ALPHA);
+
+  return {
+    backgroundColor,
+    color: getBadgeTextColor(color),
+  };
+}
 
 // ─────────────────────────────────────────
 // Картка клієнта
@@ -63,17 +51,19 @@ function ClientCard({ clientId }: { clientId: number }) {
   const [loyalty, setLoyalty] = useState<LoyaltyTransaction[]>([]);
   const [purchases, setPurchases] = useState<ClientPurchase[]>([]);
   const [segmentAction, setSegmentAction] = useState<string | null>(null);
+  const [segmentColors, setSegmentColors] = useState<Record<string, string | null>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
       setLoading(true);
-      const [clientRes, ordersRes, commsRes, loyaltyRes, purchasesRes] = await Promise.all([
+      const [clientRes, ordersRes, commsRes, loyaltyRes, purchasesRes, segmentsRes] = await Promise.all([
         fetchClientByIdRpc(clientId),
         fetchClientOrdersRpc(clientId),
         fetchClientCommsRpc(clientId),
         fetchClientLoyaltyTransactionsRpc(clientId),
         fetchFilteredRemindersRpc('', '', clientId),
+        fetchRfmSegmentsListRpc(),
       ]);
 
       if (clientRes.data) {
@@ -87,6 +77,9 @@ function ClientCard({ clientId }: { clientId: number }) {
       setComms(clientRes.error ? [] : commsRes.data);
       setLoyalty(clientRes.error ? [] : loyaltyRes.data);
       setPurchases((purchasesRes.data ?? []) as ClientReminderRow[]);
+      setSegmentColors(
+        Object.fromEntries((segmentsRes.data ?? []).map((segment) => [segment.segment_name, segment.color ?? null])),
+      );
       setLoading(false);
     }
     load();
@@ -115,13 +108,15 @@ function ClientCard({ clientId }: { clientId: number }) {
               )}
             </div>
             <div className="flex flex-wrap gap-2 mt-3">
-              <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${tierColors[client.loyalty_tier]}`}>
-                {tierNames[client.loyalty_tier] || client.loyalty_tier}
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-medium" style={getTierBadgeStyle(client.loyalty_tier)}>
+                {getTierLabel(client.loyalty_tier)}
               </span>
               {client.rfm_segment && (
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-medium text-white"
-                  style={{ backgroundColor: segmentColors[client.rfm_segment] || '#6b7280' }}>
-                  {segmentNames[client.rfm_segment] || client.rfm_segment}
+                <span
+                  className="px-2.5 py-0.5 rounded-full text-xs font-medium"
+                  style={getSegmentBadgeStyle(segmentColors[client.rfm_segment])}
+                >
+                  {getSegmentLabel(client.rfm_segment)}
                 </span>
               )}
               <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${client.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
@@ -253,6 +248,8 @@ function ClientsList() {
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [segments, setSegments] = useState<string[]>([]);
+  const [tiers, setTiers] = useState<string[]>([]);
+  const [segmentColors, setSegmentColors] = useState<Record<string, string | null>>({});
   const [sortField, setSortField] = useState<'total_spent' | 'last_order_date' | 'total_orders'>('total_spent');
   const [sortAsc, setSortAsc] = useState(false);
   const [dateFrom, setDateFrom] = useState('');
@@ -294,10 +291,25 @@ function ClientsList() {
 
   // Завантаження сегментів один раз
   useEffect(() => {
-    fetchRfmSegmentsListRpc().then(({ data, error }) => {
-      if (error) return;
-      setSegments((data ?? []).map((segment) => segment.segment_name));
-    });
+    async function loadTaxonomies() {
+      const [segmentsRes, tiersRes] = await Promise.all([
+        fetchRfmSegmentsListRpc(),
+        fetchLoyaltyTiersListRpc(),
+      ]);
+
+      if (!segmentsRes.error) {
+        setSegments((segmentsRes.data ?? []).map((segment) => segment.segment_name));
+        setSegmentColors(
+          Object.fromEntries((segmentsRes.data ?? []).map((segment) => [segment.segment_name, segment.color ?? null])),
+        );
+      }
+
+      if (!tiersRes.error) {
+        setTiers((tiersRes.data ?? []).map((tier) => tier.tier_name));
+      }
+    }
+
+    void loadTaxonomies();
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -349,7 +361,6 @@ function ClientsList() {
     setToggling(null);
   }
 
-  const tiers = ['bronze', 'silver', 'gold', 'platinum'];
   const from = total === 0 ? 0 : page * PAGE_SIZE + 1;
   const to = Math.min(page * PAGE_SIZE + PAGE_SIZE, total);
 
@@ -383,12 +394,12 @@ function ClientsList() {
         <select value={segmentFilter} onChange={e => onFilterChange(setSegmentFilter, e.target.value)}
           className="px-4 py-2.5 border border-gray-200 rounded-lg text-sm bg-white">
           <option value="all">Всі сегменти</option>
-          {segments.map(s => <option key={s} value={s}>{segmentNames[s] || s}</option>)}
+          {segments.map((segmentName) => <option key={segmentName} value={segmentName}>{getSegmentLabel(segmentName)}</option>)}
         </select>
         <select value={tierFilter} onChange={e => onFilterChange(setTierFilter, e.target.value)}
           className="px-4 py-2.5 border border-gray-200 rounded-lg text-sm bg-white">
           <option value="all">Всі рівні</option>
-          {tiers.map(t => <option key={t} value={t}>{tierNames[t] || t}</option>)}
+          {tiers.map((tierName) => <option key={tierName} value={tierName}>{getTierLabel(tierName)}</option>)}
         </select>
         <div className="flex items-center gap-2">
           <input type="date" value={dateFrom} onChange={e => onFilterChange(setDateFrom, e.target.value)}
@@ -444,15 +455,17 @@ function ClientsList() {
                     </td>
                     <td className="px-4 py-3 hidden md:table-cell">
                       {c.rfm_segment && (
-                        <span className="px-2 py-0.5 rounded-full text-xs font-medium text-white"
-                          style={{ backgroundColor: segmentColors[c.rfm_segment] || '#6b7280' }}>
-                          {segmentNames[c.rfm_segment] || c.rfm_segment}
+                        <span
+                          className="px-2 py-0.5 rounded-full text-xs font-medium"
+                          style={getSegmentBadgeStyle(segmentColors[c.rfm_segment])}
+                        >
+                          {getSegmentLabel(c.rfm_segment)}
                         </span>
                       )}
                     </td>
                     <td className="px-4 py-3 hidden lg:table-cell">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${tierColors[c.loyalty_tier] ?? 'bg-gray-100 text-gray-600'}`}>
-                        {tierNames[c.loyalty_tier] || c.loyalty_tier}
+                      <span className="px-2 py-0.5 rounded-full text-xs font-medium" style={getTierBadgeStyle(c.loyalty_tier)}>
+                        {getTierLabel(c.loyalty_tier)}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right font-medium text-gray-900">{c.total_orders}</td>

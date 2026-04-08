@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Gem, TrendingUp, Settings2, Edit2, X, ChevronLeft, ChevronRight, Wand2 } from 'lucide-react';
+import { Gem, TrendingUp, Settings2, Edit2, Plus, X, ChevronLeft, ChevronRight, Wand2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { format, parseISO } from 'date-fns';
@@ -15,12 +15,10 @@ import {
   type LoyaltyTopClientRow,
   type LoyaltyTransactionRow,
 } from '../lib/serverQueries';
+import { getTierBadgeStyle, getTierColor, getTierLabel } from '../lib/loyalty';
+import { supabase } from '../lib/supabase';
 
 const TRANSACTIONS_PAGE_SIZE = 50;
-
-const tierColors: Record<string, string> = {
-  bronze: '#d97706', silver: '#6b7280', gold: '#eab308', platinum: '#7c3aed',
-};
 
 type LoyaltyOverview = {
   totalClients: number;
@@ -28,10 +26,6 @@ type LoyaltyOverview = {
   avgPoints: number;
   participationRate: number;
   transactionsCount: number;
-  bronzeCount: number;
-  silverCount: number;
-  goldCount: number;
-  platinumCount: number;
 };
 
 const emptyOverview: LoyaltyOverview = {
@@ -40,10 +34,6 @@ const emptyOverview: LoyaltyOverview = {
   avgPoints: 0,
   participationRate: 0,
   transactionsCount: 0,
-  bronzeCount: 0,
-  silverCount: 0,
-  goldCount: 0,
-  platinumCount: 0,
 };
 
 export default function LoyaltyPage() {
@@ -56,14 +46,21 @@ export default function LoyaltyPage() {
   const [transactionsPage, setTransactionsPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [editingTier, setEditingTier] = useState<LoyaltyTier | null>(null);
+  const [tierCounts, setTierCounts] = useState<Record<string, number>>({});
+  const [isCreatingTier, setIsCreatingTier] = useState(false);
   const [saving, setSaving] = useState(false);
   const [seeding, setSeeding] = useState(false);
 
   const loadOverview = useCallback(async () => {
-    const [overviewRes, topClientsRes, tiersRes] = await Promise.all([
+    const [overviewRes, topClientsRes, tiersRes, tierCountsRes] = await Promise.all([
       fetchLoyaltyOverviewRpc(),
       fetchLoyaltyTopClientsRpc(10),
       fetchLoyaltyTiersListRpc(),
+      supabase
+        .from('clients')
+        .select('loyalty_tier')
+        .eq('is_active', true)
+        .gt('total_orders', 0),
     ]);
 
     if (!overviewRes.error && overviewRes.data) {
@@ -73,10 +70,6 @@ export default function LoyaltyPage() {
         avgPoints: overviewRes.data.avg_points ?? 0,
         participationRate: overviewRes.data.participation_rate ?? 0,
         transactionsCount: overviewRes.data.transactions_count ?? 0,
-        bronzeCount: overviewRes.data.bronze_count ?? 0,
-        silverCount: overviewRes.data.silver_count ?? 0,
-        goldCount: overviewRes.data.gold_count ?? 0,
-        platinumCount: overviewRes.data.platinum_count ?? 0,
       });
     }
 
@@ -86,6 +79,20 @@ export default function LoyaltyPage() {
 
     if (!tiersRes.error) {
       setTiers(tiersRes.data);
+    }
+
+    if (!tierCountsRes.error) {
+      const nextCounts: Record<string, number> = {};
+
+      for (const row of tierCountsRes.data ?? []) {
+        if (!row.loyalty_tier) {
+          continue;
+        }
+
+        nextCounts[row.loyalty_tier] = (nextCounts[row.loyalty_tier] ?? 0) + 1;
+      }
+
+      setTierCounts(nextCounts);
     }
   }, []);
 
@@ -115,10 +122,17 @@ export default function LoyaltyPage() {
   async function saveTier(e: React.FormEvent) {
     e.preventDefault();
     if (!editingTier) return;
+    const tierName = editingTier.tier_name.trim();
+
+    if (!tierName) {
+      toast.error('Вкажи назву рівня');
+      return;
+    }
+
     setSaving(true);
 
     const { error } = await upsertLoyaltyTierRpc({
-      tierName: editingTier.tier_name,
+      tierName,
       minTotalSpent: editingTier.min_total_spent,
       minOrders: editingTier.min_orders,
       cashbackPercent: editingTier.cashback_percent,
@@ -137,8 +151,9 @@ export default function LoyaltyPage() {
         return;
       }
       await loadOverview();
-      toast.success('Налаштування рівня оновлено');
+      toast.success(isCreatingTier ? 'Новий рівень створено' : 'Налаштування рівня оновлено');
       setEditingTier(null);
+      setIsCreatingTier(false);
     }
     setSaving(false);
   }
@@ -161,21 +176,42 @@ export default function LoyaltyPage() {
     setSeeding(false);
   }
 
-  const tierCounts: Record<string, number> = {
-    bronze: overview.bronzeCount,
-    silver: overview.silverCount,
-    gold: overview.goldCount,
-    platinum: overview.platinumCount,
-  };
+  function startCreateTier() {
+    const nextSortOrder = tiers.reduce((maxSortOrder, tier) => Math.max(maxSortOrder, tier.sort_order), 0) + 1;
 
-  const pieData = Object.entries(tierCounts).map(([name, value]) => ({ name, value, color: tierColors[name] }));
+    setIsCreatingTier(true);
+    setEditingTier({
+      tier_name: '',
+      min_total_spent: 0,
+      min_orders: 0,
+      cashback_percent: 0,
+      bonus_multiplier: 1,
+      perks: '',
+      sort_order: nextSortOrder,
+    });
+  }
+
+  const pieData = tiers.map((tier) => ({
+    name: getTierLabel(tier.tier_name),
+    value: tierCounts[tier.tier_name] ?? 0,
+    color: getTierColor(tier.tier_name),
+  }));
   const transactionsTotalPages = Math.ceil(transactionsTotal / TRANSACTIONS_PAGE_SIZE);
 
   if (loading) return <div className="text-center py-20 text-gray-400">Завантаження...</div>;
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Програма лояльності</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-gray-900">Програма лояльності</h1>
+        <button
+          onClick={startCreateTier}
+          className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition"
+        >
+          <Plus className="w-4 h-4" />
+          Новий рівень
+        </button>
+      </div>
 
       <div className="flex gap-1 bg-gray-100 p-1 rounded-lg w-fit">
         {[
@@ -254,12 +290,9 @@ export default function LoyaltyPage() {
                     <span className="text-xs text-gray-400 w-5">{i + 1}.</span>
                     <div className="flex-1">
                       <p className="text-sm font-medium text-gray-900">{c.full_name}</p>
-                      <span className={`text-xs px-1.5 py-0.5 rounded capitalize ${
-                        c.loyalty_tier === 'platinum' ? 'bg-purple-100 text-purple-700' :
-                        c.loyalty_tier === 'gold' ? 'bg-yellow-100 text-yellow-700' :
-                        c.loyalty_tier === 'silver' ? 'bg-gray-100 text-gray-700' :
-                        'bg-amber-100 text-amber-700'
-                      }`}>{c.loyalty_tier}</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded capitalize ${
+                        ''
+                      }`} style={getTierBadgeStyle(c.loyalty_tier)}>{getTierLabel(c.loyalty_tier)}</span>
                     </div>
                     <span className="text-sm font-bold text-gray-900">{c.loyalty_points.toLocaleString()}</span>
                   </div>
@@ -331,13 +364,13 @@ export default function LoyaltyPage() {
       {tab === 'config' && tiers.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {tiers.map(tier => (
-            <div key={tier.tier_name} className="bg-white rounded-xl border-2 shadow-sm p-6" style={{ borderColor: tierColors[tier.tier_name] }}>
+            <div key={tier.tier_name} className="bg-white rounded-xl border-2 shadow-sm p-6" style={{ borderColor: getTierColor(tier.tier_name) }}>
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
-                  <Gem className="w-5 h-5" style={{ color: tierColors[tier.tier_name] }} />
-                  <h3 className="text-lg font-bold text-gray-900 capitalize">{tier.tier_name}</h3>
+                  <Gem className="w-5 h-5" style={{ color: getTierColor(tier.tier_name) }} />
+                  <h3 className="text-lg font-bold text-gray-900">{getTierLabel(tier.tier_name)}</h3>
                 </div>
-                <button onClick={() => setEditingTier(tier)} className="p-1.5 hover:bg-gray-100 rounded-md text-gray-400 hover:text-gray-600 transition">
+                <button onClick={() => { setIsCreatingTier(false); setEditingTier(tier); }} className="p-1.5 hover:bg-gray-100 rounded-md text-gray-400 hover:text-gray-600 transition">
                   <Edit2 className="w-4 h-4" />
                 </button>
               </div>
@@ -373,16 +406,41 @@ export default function LoyaltyPage() {
       {editingTier && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-md overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+              <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
               <div className="flex items-center gap-2">
-                <Gem className="w-5 h-5" style={{ color: tierColors[editingTier.tier_name] }} />
-                <h3 className="font-semibold text-gray-900 capitalize">Налаштування: {editingTier.tier_name}</h3>
+                <Gem className="w-5 h-5" style={{ color: getTierColor(editingTier.tier_name) }} />
+                <h3 className="font-semibold text-gray-900">{isCreatingTier ? 'Новий рівень' : `Налаштування: ${getTierLabel(editingTier.tier_name)}`}</h3>
               </div>
-              <button type="button" onClick={() => setEditingTier(null)} className="text-gray-400 hover:text-gray-600">
+              <button type="button" onClick={() => { setEditingTier(null); setIsCreatingTier(false); }} className="text-gray-400 hover:text-gray-600">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <form onSubmit={saveTier} className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Назва рівня</label>
+                  <input
+                    required
+                    type="text"
+                    value={editingTier.tier_name}
+                    disabled={!isCreatingTier}
+                    onChange={e => setEditingTier({ ...editingTier, tier_name: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-400"
+                    placeholder="Напр. VIP"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Порядок</label>
+                  <input
+                    required
+                    type="number"
+                    min="1"
+                    value={editingTier.sort_order}
+                    onChange={e => setEditingTier({ ...editingTier, sort_order: parseInt(e.target.value) || 1 })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Мін. сума витрат (грн)</label>
@@ -406,7 +464,7 @@ export default function LoyaltyPage() {
                 <textarea rows={2} value={editingTier.perks || ''} onChange={e => setEditingTier({ ...editingTier, perks: e.target.value })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Напр. Безкоштовна доставка..." />
               </div>
               <div className="pt-4 flex justify-end gap-3">
-                <button type="button" onClick={() => setEditingTier(null)} className="px-4 py-2 text-gray-700 font-medium hover:bg-gray-100 rounded-lg transition">Скасувати</button>
+                <button type="button" onClick={() => { setEditingTier(null); setIsCreatingTier(false); }} className="px-4 py-2 text-gray-700 font-medium hover:bg-gray-100 rounded-lg transition">Скасувати</button>
                 <button type="submit" disabled={saving} className="px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition disabled:opacity-50">{saving ? 'Збереження...' : 'Зберегти'}</button>
               </div>
             </form>
